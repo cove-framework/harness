@@ -127,3 +127,23 @@ export class SubmissionTimeoutError extends CoveError {
 		super(`[cove] submission "${submissionId}" exceeded its timeout.`, "submission_timeout");
 	}
 }
+
+/**
+ * A result-schema run could not produce a validated result: the model called
+ * `give_up`, or it exhausted `maxFollowUps` re-nudges (`result_followups_exhausted`).
+ * Such a run REJECTS the CallHandle with this error rather than resolving
+ * `PromptResultResponse<T>` with unvalidated `data`. Ported from flue's
+ * `ResultUnavailableError` (result.ts). See doc 08 §4.10.
+ */
+export class ResultUnavailableError extends CoveError {
+	readonly reason: string;
+	readonly assistantText?: string;
+	constructor(args: { reason: string; assistantText?: string }) {
+		super(
+			`[cove] result unavailable: the agent did not produce a valid result (${args.reason}).`,
+			"result_unavailable",
+		);
+		this.reason = args.reason;
+		this.assistantText = args.assistantText;
+	}
+}

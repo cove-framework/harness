@@ -226,19 +226,38 @@ export interface DurabilityConfig {
 	 * exceed this are aborted and settled as failed. Defaults to 3,600,000 (1h).
 	 */
 	timeoutMs?: number;
+	/**
+	 * Defense-in-depth ceiling on agent-loop steps per submission. NOT flue's model —
+	 * flue has no framework turn cap (the model terminalizes via finish/give_up); this
+	 * only catches a runaway loop. Resolved at setup and frozen onto the plan; reaching
+	 * it terminalizes the request as failed with a `step_limit_exceeded` reason.
+	 * Defaults to 100. See doc 08 §4.9.
+	 */
+	maxSteps?: number;
+	/**
+	 * Max result-tool re-nudges for a result-schema run before it terminalizes as
+	 * failed with a `result_followups_exhausted` reason (the CallHandle then rejects
+	 * with `ResultUnavailableError`, never resolving an unvalidated result). Parallel
+	 * to `maxSteps`; resolved at setup and frozen onto the plan. Ported from flue's
+	 * MAX_FOLLOWUPS. Defaults to 32. See doc 08 §4.10.
+	 */
+	maxFollowUps?: number;
 }
 
 // ─── Agent Config (internal, passed to the harness at runtime) ──────────────
 
 export interface AgentConfig {
-	/** Discovered at runtime from AGENTS.md + .agents/skills/ in the session's cwd. */
+	/** Composed at setup from instructions + the resolved skill catalog — no cwd
+	 * AGENTS.md/.agents FS walk (replaced by the `skills` catalog table; see D13 and
+	 * doc 08 §3 — Skills resolve at the call site). */
 	systemPrompt: string;
-	/** Agent instructions prepended ahead of discovered workspace context. */
+	/** Agent instructions prepended ahead of resolved skill/workspace context. */
 	instructions?: string;
-	/** Agent-definition skills merged into each discovered skill catalog. */
+	/** Agent-definition skills merged into the resolved skill catalog. */
 	definitionSkills?: Skill[];
 	packagedSkills?: Record<string, PackagedSkillDirectory>;
-	/** Discovered at runtime from .agents/skills/ in the session's cwd. */
+	/** Resolved from the `skills` catalog table at runtime — NOT a cwd
+	 * `.agents/skills/` discovery walk (D13). */
 	skills: Record<string, Skill>;
 	subagents?: Record<string, AgentProfile>;
 	/**

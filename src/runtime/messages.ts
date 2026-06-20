@@ -154,6 +154,12 @@ export interface ModelHandle {
 	modelString: string;
 	contextWindow?: number;
 	maxOutputTokens?: number;
+	/**
+	 * When false, `toModelMessages` REPLACES image blocks in user/toolResult messages
+	 * with a text placeholder (consecutive placeholders de-duped) rather than passing
+	 * raw image bytes to a non-vision model — which would 400. Ported from pi's
+	 * transform-messages downgrade. See doc 04 / 08 §4.8.
+	 */
 	supportsVision?: boolean;
 	supportsReasoning?: boolean;
 	cost?: {

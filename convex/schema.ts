@@ -48,6 +48,14 @@ const frozenPlanValidator = v.object({
   thinkingLevel: v.optional(v.string()),
   compaction: v.optional(v.union(v.literal(false), v.any())),
   durability: v.optional(v.any()),
+  // Defense-in-depth loop ceiling (resolved from DurabilityConfig.maxSteps, default
+  // 100). The durable loop runs `while (stepNumber < plan.maxSteps)`; at the cap,
+  // finalize terminalizes the request as failed/step_limit_exceeded. See doc 08 §4.9.
+  maxSteps: v.optional(v.number()),
+  // Result-tool re-nudge budget for result-schema runs (DurabilityConfig.maxFollowUps,
+  // default 32). Exhausting it terminalizes failed/result_followups_exhausted and the
+  // CallHandle rejects with ResultUnavailableError. See doc 08 §4.10.
+  maxFollowUps: v.optional(v.number()),
   // Resolved tool descriptors (name/description/JSON-Schema params) — NOT the
   // live `execute` closures, which can't cross the workflow journal. Rebound
   // per-llmStep from the agent registry.

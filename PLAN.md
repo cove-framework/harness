@@ -13,8 +13,8 @@ a sandbox scoped to one designated per-session workspace folder, watches the res
 and decides the next step. Convex orchestrates and watches; the sandbox executes; the
 LLM decides but does not control flow.
 
-**Full design-of-record:** [`../documents/cove-harness/`](../documents/cove-harness/README.md)
-— start with [08 — Conventions & Execution Boundary](../documents/cove-harness/08-conventions-and-execution-boundary.md)
+**Full design-of-record:** [`docs/design/`](docs/design/README.md)
+— start with [08 — Conventions & Execution Boundary](docs/design/08-conventions-and-execution-boundary.md)
 (naming, the reference-header convention, the execution boundary, and the hardened
 engine contracts). Every source file carries a header citing its flue/pi origin + package.
 
@@ -25,7 +25,7 @@ engine contracts). Every source file carries a header citing its flue/pi origin 
 | Execution loop | in-process `pi-agent-core` `Agent` turn loop | **`@convex-dev/workflow`** durable loop |
 | System-of-record | SQL `SessionStore` / `AgentExecutionStore` | **Convex tables** + reactive queries |
 | Streaming transport | Durable Streams / SSE long-poll | **Convex reactivity** (no SSE) — clients subscribe to queries |
-| Sandbox | `SandboxApi` / `bash()` (local/Daytona/E2B/CF) | **`@upstash/box`** behind the same `SandboxFactory` seam |
+| Sandbox | `SandboxApi` / `bash()` (local/Daytona/E2B/CF) | **`@upstash/box`** (default sandbox) **+ a local in-process `bash()` adapter** (real-machine target), both behind the same `SandboxFactory` seam; Daytona/E2B/CF left to third parties |
 | LLM | `pi-ai` multi-provider | **AI SDK** gateway (`@ai-sdk/*`) provider registry |
 | HTTP runtime | Hono `flue()` app + DS endpoints | Convex `httpRouter` / `httpAction` (submit + poll only) |
 | Consumer SDK | `@flue/sdk` over HTTP+DS | thin shim over **ConvexReactClient** subscriptions |
@@ -49,8 +49,11 @@ engine contracts). Every source file carries a header citing its flue/pi origin 
   turn-journal / lease / attempt-marker machinery is **dropped**, not re-implemented.
 - **Agent addressing** is an explicit `defineAgentRegistry({ name: createAgent(...) })`
   (Convex has no filesystem-module addressing). `createAgent()`'s signature is unchanged.
-- **Sandbox:** `SandboxFactory` stays an open extension point; `@upstash/box` ships as the
-  only built-in implementation.
+- **Sandbox:** `SandboxFactory` stays an open extension point; **two built-ins ship** —
+  `@upstash/box` (default isolated sandbox) and a local in-process `bash()` adapter (the
+  **real-machine** target, ported from flue's `createBashSessionEnv`; backed by
+  `BashFactory`/`BashLike`). A third-party real-machine factory must obey the boundary
+  rules in [08 §3](docs/design/08-conventions-and-execution-boundary.md#execution-targets-beyond-the-box-real-machine--network).
 - **Layout:** standalone Convex app in `cove-harness/`; `pi-agent-core` / `pi-ai` are dropped
   (AI SDK replaces the loop and the provider layer).
 - **Delta-batch cadence:** ~400 ms / ~480 chars, made configurable.
@@ -75,9 +78,12 @@ cove-harness/
     invoke/                    ← submitPrompt / submitTask / stopActive / submitApproval (public mutations behind CoveSession)
     sandbox/upstashBox.ts      ← @upstash/box SandboxApi impl wrapped by ported createSandboxSessionEnv
     providers/                 ← AI SDK gateway registry + ModelConfig/ThinkingLevel resolution
+    mcp/                       ← "use node" connectMcpServer: open transport, freeze tool descriptors (server identity+transport), re-resolve client per step (the one network exception to box-binding)
     events/                    ← eventStream append (batched) + reactive read queries (observe() substitute)
-    http.ts                    ← httpRouter: POST submit, GET poll result (no SSE); pluggable auth hook
-    agentRegistry.ts           ← defineAgentRegistry — explicit name→CreatedAgent map
+    http.ts                    ← httpRouter: POST submit (agents + POST /workflows/:name), GET poll result (no SSE); pluggable auth hook; error-render + request-validation sub-layer (CoveHttpError 4xx subclasses, renderHttpError→CoveApiError wire envelope, validateAgentRequest/validateWorkflowRequest)
+    agentRegistry.ts           ← defineAgentRegistry — explicit name→CreatedAgent map (build-time name/uniqueness/__coveCreatedAgent-brand validation); Convex-app-bound, NOT on the @cove/runtime barrel
+    workflows/                 ← defineWorkflow user-authored handlers: code-orchestrated runs (a WorkflowHandler per name); distinct run kind (runs.kind='workflow')
+    workflowRegistry.ts        ← defineWorkflow — name→WorkflowHandler map (D18); Convex-app-bound like agentRegistry, NOT on the @cove/runtime barrel
   src/
     runtime/                   ← portable, V8-safe pure logic (the public @cove/runtime surface)
       messages.ts              ← AgentMessage/ImageContent/AgentTool/ThinkingLevel decoupled from pi
@@ -88,7 +94,7 @@ cove-harness/
       session-history.ts       ← SessionHistory tree logic (ported; pure)
       compaction.ts            ← prepareCompaction / token estimation (ported; pure)
       skill-frontmatter.ts     ← parseSkillMarkdown (ported; pure)
-      index.ts                 ← barrel mirroring @flue/runtime exports (now @cove/runtime)
+      index.ts                 ← barrel mirroring @flue/runtime's PORTABLE exports as @cove/runtime (Convex-app-bound constructs — defineAgentRegistry, defineWorkflow, connectMcpServer — live under convex/, not here)
     sdk/                       ← createCoveClient over ConvexReactClient (Phase 9)
 ```
 
@@ -112,15 +118,18 @@ hierarchy.
 
 - **P0 — Scaffold + plan** (this commit): package, tsconfig, convex.config, schema, plan.
 - **P1 — Pure core:** SOR schema + ported pure-logic modules (compile-clean spine).
-- **P2 — Sandbox:** `@upstash/box` adapter behind `SandboxFactory`/`SessionEnv`.
+- **P2 — Sandbox:** `@upstash/box` adapter + local `bash()` real-machine adapter behind `SandboxFactory`/`SessionEnv`.
 - **P3 — Providers:** AI SDK gateway registry; model + thinking-level resolution.
 - **P4 — Engine:** durable workflow loop (setup → llmStep → dispatchTools → finalize) + batcher.
 - **P5 — Sessions:** Convex `SessionStore` (header + entry tree diff-sync, cascade delete).
 - **P6 — Harness/invoke:** `CoveContext.init` → `CoveHarness`/`CoveSession` over Convex.
 - **P7 — HITL:** approval gate via `awaitEvent` + `approvals` table + `submitApproval`.
-- **P8 — HTTP + auth:** submit/poll `httpAction`s; pluggable auth hook.
-- **P8.5 — CLI + codegen:** Convex-native build/dev; `defineAgentRegistry` codegen into
-  the app wiring; config validation; the `cove` binary (replaces `@flue/cli`).
+- **P8 — HTTP + auth:** submit/poll `httpAction`s; `POST /workflows/:name` workflows surface
+  (D18); pluggable auth hook; `CoveHttpError` 4xx subclasses + `renderHttpError` (`CoveApiError`
+  wire envelope) + `validateAgentRequest`/`validateWorkflowRequest`.
+- **P8.5 — CLI + codegen:** Convex-native build/dev; `defineAgentRegistry` +
+  `defineWorkflow` codegen into the app wiring; config validation; the `cove` binary
+  (replaces `@flue/cli`). `cove add`/blueprint scaffolding is a deferred non-goal.
 - **P9 — Events + SDK:** reactive event substrate; `createCoveClient` over ConvexReactClient + `@cove/react` hooks.
 - **P10 — Skills + MCP:** skill catalog, `parseSkillMarkdown`, `connectMcpServer`.
 - **P11 — Channels:** port slack/github/discord/… and remaining integrations.
