@@ -49,3 +49,6 @@ pnpm-debug.log*
 # OS
 .DS_Store
 Thumbs.db
+
+# Project-local rules (not published)
+.rules
