@@ -146,6 +146,12 @@ export interface AgentTool<TArgs = any> {
  * resolves a `ModelConfig` string to one of these via the provider registry
  * (convex/providers). Carries the gateway model id, provider, and capability
  * metadata used by compaction + vision/reasoning gating.
+ *
+ * The `model` field carries the resolved Vercel AI SDK `LanguageModelV2`, but is
+ * typed `unknown` here so the V8-safe `src/runtime` core NEVER imports the AI
+ * SDK (`ai` / `@ai-sdk/*`). Only `convex/providers/*` and `convex/engine/*`
+ * (both `"use node"` modules) cast it back to `LanguageModelV2`. This preserves
+ * the execution boundary (doc 08 §3): the core stays import-clean of the AI SDK.
  */
 export interface ModelHandle {
 	id: string;
@@ -168,4 +174,20 @@ export interface ModelHandle {
 		cacheRead?: number;
 		cacheWrite?: number;
 	};
+	/**
+	 * Per-`ThinkingLevel` provider-specific reasoning-effort mapping. A `null`
+	 * value marks the level as unsupported (snapped away by `clampThinkingLevel`);
+	 * a `string` is the provider-native effort token. Hydrated from the capability
+	 * catalog (convex/providers/capabilities.ts). Optional — absent for models with
+	 * no reasoning metadata.
+	 */
+	thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>>;
+	/**
+	 * The resolved Vercel AI SDK `LanguageModelV2`, typed `unknown` to keep the AI
+	 * SDK out of the V8-safe core. `convex/providers/*` / `convex/engine/*` cast it
+	 * back to `LanguageModelV2` before calling `streamText`/`generateText`. The
+	 * test seam (convex/providers/testModel.ts) puts an in-process `LanguageModelV2`
+	 * mock here.
+	 */
+	model?: unknown;
 }

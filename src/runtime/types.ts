@@ -512,6 +512,8 @@ export interface PromptUsage {
 	output: number;
 	cacheRead: number;
 	cacheWrite: number;
+	/** Subset of `cacheWrite` with 1h retention (Anthropic only); preserved for cost fidelity (doc 08 §4.7). */
+	cacheWrite1h?: number;
 	totalTokens: number;
 	cost: {
 		input: number;

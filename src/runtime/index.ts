@@ -11,6 +11,14 @@
  */
 
 export { createAgent, defineAgentProfile } from "./agent-definition.ts";
+export { createCoveContext } from "./context.ts";
+export type {
+	CoveContextInit,
+	CoveTransport,
+	PromptSubmission,
+	RequestSnapshot,
+	SessionRef,
+} from "./context.ts";
 export { defineTool } from "./tool.ts";
 export {
 	AttachmentNotAvailableError,

@@ -63,12 +63,30 @@ const frozenPlanValidator = v.object({
   skills: v.optional(v.array(v.any())),
   subagents: v.optional(v.any()),
   cwd: v.optional(v.string()),
+  // Result JSON Schema (valibot→JSON Schema) for a result-shaped run; frozen so llmStep/dispatchTools
+  // rebuild the finish/give_up tools deterministically across the journal (doc 08 §4.10).
+  resultSchema: v.optional(v.any()),
+  // Tool names that require human approval before dispatch (HITL gate; doc 08 §4.4). decode marks matching
+  // tool calls isHitl; the loop parks on step.awaitEvent until submitApproval resolves them.
+  approvalTools: v.optional(v.array(v.string())),
 });
 
+// Full PromptUsage fidelity (doc 08 §4.7): not a token-only subset — carries cache tokens + the
+// per-model cost breakdown so cache accounting and computed cost survive persistence and replay.
 const usageValidator = v.object({
-  inputTokens: v.optional(v.number()),
-  outputTokens: v.optional(v.number()),
-  totalTokens: v.optional(v.number()),
+  input: v.number(),
+  output: v.number(),
+  cacheRead: v.number(),
+  cacheWrite: v.number(),
+  cacheWrite1h: v.optional(v.number()),
+  totalTokens: v.number(),
+  cost: v.object({
+    input: v.number(),
+    output: v.number(),
+    cacheRead: v.number(),
+    cacheWrite: v.number(),
+    total: v.number(),
+  }),
 });
 
 export default defineSchema({
@@ -159,8 +177,14 @@ export default defineSchema({
     imageAttachmentIds: v.optional(v.array(v.string())),
     // True when the caller passed `options.result` (structured extraction).
     expectsResult: v.optional(v.boolean()),
+    // The result JSON Schema supplied at admission (frozen onto the plan at setup; doc 08 §4.10).
+    resultSchema: v.optional(v.any()),
+    // Tool names requiring human approval (HITL; frozen onto the plan at setup, doc 08 §4.4).
+    approvalTools: v.optional(v.array(v.string())),
     // The skill ref / subagent name for kind="skill"/"task".
     target: v.optional(v.string()),
+    // Nested task-delegation depth (0 = top-level); child = parent+1, bounded by MAX_TASK_DEPTH (doc 04).
+    taskDepth: v.optional(v.number()),
 
     // Lifecycle:
     //   pending   — admitted, not yet started by the workflow.
@@ -203,6 +227,8 @@ export default defineSchema({
     totalToolCalls: v.optional(v.number()),
     totalSteps: v.optional(v.number()),
     durationMs: v.optional(v.number()),
+    // Full aggregated PromptUsage (addUsage of per-step usage) for cost/cache fidelity (doc 08 §4.7).
+    usage: v.optional(usageValidator),
 
     createdAt: v.number(),
     updatedAt: v.number(),

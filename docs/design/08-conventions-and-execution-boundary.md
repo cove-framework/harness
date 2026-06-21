@@ -173,8 +173,12 @@ Non-negotiable correctness rules for the durable loop (audit fixes). Full prose 
 On workflow replay an action re-runs; it must **not** re-call the model. At entry,
 `llmStep` queries `agentRequestSteps` by `(requestId, stepNumber)`; if a finalized
 row exists, it **reconstructs and returns the finalized decision without calling the
-AI SDK**. **The model is called at most once per step number**; the finalized step
-row is the source of truth on replay.
+AI SDK**. **The model is called at most once per *finalized* step**; the finalized step
+row is the source of truth on replay. (A hard crash/kill *mid-stream* — after the streaming
+row is inserted but before it finalizes — re-attempts the decode on re-run: re-streaming a
+complete turn is preferable to force-finalizing a partial, and the re-run overwrites the
+streaming row so persisted state stays consistent. The soft stream-deadline force-finalize
+in §4.2 is the in-action bound; this is the cross-action crash bound.)
 
 ### 4.2 Action budgets & timeouts
 - **`llmStep` stream deadline ≈ 240 s** — on deadline, force-finalize the partial

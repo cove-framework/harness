@@ -1,0 +1,237 @@
+"use node";
+// Ported-pattern from flue · @flue/runtime · packages/runtime/src/session.ts (runModelTurnWithRecovery) → @cove/runtime
+// One LLM decode, streamed. flue's in-process "recovery" becomes the workflow journal + the idempotent
+// step row. The REPLAY GUARD (doc 08 §4.1) is non-negotiable: on a workflow replay this code re-runs, so
+// before touching the AI SDK it consults the persisted step row — a finalized row reconstructs the
+// decision WITHOUT calling the model. Precisely: the model is called at most once per *finalized* step. A
+// hard crash/kill AFTER insertStreaming but BEFORE finalizeStep leaves a non-finalized row, and the re-run
+// re-attempts the decode — re-streaming a complete turn is preferable to force-finalizing a partial, and
+// the persisted state stays consistent because the re-run overwrites the streaming row.
+//
+// This is the pure decode core: the persistence side-effects (load/insert/patch/finalize the step row)
+// are injected as a DecodeDeps port, so it unit-tests against the in-process MockLanguageModelV2 with no
+// Convex runtime. The thin "use node" llmStep internalAction wires DecodeDeps to ctx mutations/queries.
+//
+// "use node": imports the AI SDK (`ai` streamText/tool/jsonSchema). Reached only from the llmStep action.
+
+import type { JSONSchema7, LanguageModelV2 } from "@ai-sdk/provider";
+import { jsonSchema, type ModelMessage, streamText, tool } from "ai";
+import type { ModelHandle } from "../../src/runtime/messages.ts";
+import type { PromptUsage } from "../../src/runtime/types.ts";
+import { DeltaBatcher, type DeltaBatcherOptions, type DeltaPatch } from "./deltaBatcher.ts";
+import type { ModelToolView, StepDecision, ToolCallRecord } from "./types.ts";
+import { type AiSdkUsage, usageFromAiSdk } from "./usage.ts";
+
+/** llmStep stream deadline (doc 08 §4.2): force-finalize the partial rather than let the action be killed. */
+export const STREAM_DEADLINE_MS = 240_000;
+
+/** A verbatim provider response message replayed on the next step (signatures preserved). */
+export interface ResponseMessageRecord {
+	role: string;
+	content: unknown;
+	providerMetadata?: unknown;
+}
+
+/** The finalized step payload written atomically with isFinalized:true. */
+export interface FinalizedStep {
+	finishReason: string;
+	text: string;
+	reasoning: string;
+	toolCalls: ToolCallRecord[];
+	responseMessages: ResponseMessageRecord[];
+	usage: PromptUsage;
+	model: string;
+	durationMs: number;
+}
+
+/** Minimal view of an existing step row the replay guard reads. */
+export interface ExistingStep {
+	isFinalized: boolean;
+	finishReason?: string;
+	text?: string;
+	toolCalls?: ToolCallRecord[];
+}
+
+/** Injected persistence port — wired to Convex mutations/queries by the llmStep action. */
+export interface DecodeDeps {
+	/** Replay guard source: the existing (requestId, stepNumber) step row, or null. */
+	loadStep(): Promise<ExistingStep | null>;
+	/** Upsert the streaming step row (isFinalized:false). Idempotent (a retry re-inserts safely). */
+	insertStreaming(): Promise<void>;
+	/** Delta-batcher sink: append coalesced deltas onto the step row in place. */
+	patch(patch: DeltaPatch): Promise<void>;
+	/** Persist the finalized step (toolCalls/usage/responseMessages, isFinalized:true). */
+	finalizeStep(step: FinalizedStep): Promise<void>;
+	now?: () => number;
+	batchOptions?: DeltaBatcherOptions;
+	/** Force-finalize deadline (ms); default {@link STREAM_DEADLINE_MS}. */
+	streamDeadlineMs?: number;
+	/** Approval-gated tool names — marks decoded toolCalls isHitl (P7). */
+	hitlToolNames?: ReadonlySet<string>;
+}
+
+export interface DecodeInput {
+	handle: ModelHandle;
+	systemPrompt?: string;
+	messages: ModelMessage[];
+	tools: ModelToolView[];
+}
+
+/**
+ * Run one decode. Returns the step decision. On a finalized step row it reconstructs the decision
+ * without calling the model (replay guard, doc 08 §4.1); otherwise it streams from the AI SDK,
+ * delta-batches text/reasoning into the row, and finalizes the step atomically.
+ */
+export async function runDecode(input: DecodeInput, deps: DecodeDeps): Promise<StepDecision> {
+	const existing = await deps.loadStep();
+	if (existing?.isFinalized) return reconstructDecision(existing);
+
+	await deps.insertStreaming();
+
+	const now = deps.now ?? Date.now;
+	const start = now();
+	const deadlineMs = deps.streamDeadlineMs ?? STREAM_DEADLINE_MS;
+	const batcher = new DeltaBatcher(deps.patch, { ...deps.batchOptions, now });
+
+	const result = streamText({
+		model: input.handle.model as LanguageModelV2,
+		system: input.systemPrompt,
+		messages: input.messages,
+		tools: toAiTools(input.tools),
+	});
+
+	let accText = "";
+	let accReasoning = "";
+	const toolCalls: ToolCallRecord[] = [];
+	let finishReason = "stop";
+	let usageRaw: AiSdkUsage | undefined;
+	let modelId: string | undefined;
+	let streamError: unknown;
+	let forced = false;
+
+	for await (const part of result.fullStream) {
+		switch (part.type) {
+			case "text-delta":
+				accText += part.text;
+				await batcher.text(part.text);
+				break;
+			case "reasoning-delta":
+				accReasoning += part.text;
+				await batcher.reasoning(part.text);
+				break;
+			case "tool-call":
+				toolCalls.push({
+					toolCallId: part.toolCallId,
+					toolName: part.toolName,
+					args: asRecord(part.input),
+					isHitl: deps.hitlToolNames?.has(part.toolName) || undefined,
+				});
+				break;
+			case "finish-step":
+				modelId = part.response.modelId ?? modelId;
+				break;
+			case "finish":
+				finishReason = part.finishReason;
+				usageRaw = part.totalUsage as AiSdkUsage;
+				break;
+			case "error":
+				streamError = part.error;
+				break;
+			default:
+				break;
+		}
+		if (now() - start >= deadlineMs) {
+			forced = true;
+			break;
+		}
+	}
+
+	await batcher.flush();
+	if (streamError) throw toError(streamError);
+
+	let responseMessages: ResponseMessageRecord[];
+	if (forced) {
+		responseMessages = synthesizeResponse(accText, accReasoning, toolCalls);
+	} else {
+		try {
+			const resp = await result.response;
+			modelId = modelId ?? resp.modelId;
+			responseMessages = resp.messages.map((m) => ({
+				role: m.role,
+				content: (m as { content: unknown }).content,
+				providerMetadata: (m as { providerOptions?: unknown }).providerOptions,
+			}));
+		} catch {
+			responseMessages = synthesizeResponse(accText, accReasoning, toolCalls);
+		}
+	}
+
+	const finalized: FinalizedStep = {
+		finishReason,
+		text: accText,
+		reasoning: accReasoning,
+		toolCalls,
+		responseMessages,
+		usage: usageFromAiSdk(usageRaw, input.handle),
+		model: modelId ?? input.handle.modelString,
+		durationMs: now() - start,
+	};
+	await deps.finalizeStep(finalized);
+	return decisionFromFinalized(finalized);
+}
+
+/** Reconstruct the step decision from a finalized row — the replay path (no model call). */
+export function reconstructDecision(existing: ExistingStep): StepDecision {
+	return {
+		finishReason: existing.finishReason ?? "stop",
+		toolCalls: existing.toolCalls ?? [],
+		text: existing.text ?? "",
+		shouldCompact: false,
+	};
+}
+
+function decisionFromFinalized(step: FinalizedStep): StepDecision {
+	return {
+		finishReason: step.finishReason,
+		toolCalls: step.toolCalls,
+		text: step.text,
+		// Proactive-threshold compaction lands P12; the seam stays false in P4.
+		shouldCompact: false,
+	};
+}
+
+/** Map the run's frozen model-view tools to AI SDK tools (no execute — cove dispatches them itself). */
+function toAiTools(views: ModelToolView[]) {
+	const out: Record<string, ReturnType<typeof tool>> = {};
+	for (const v of views) {
+		out[v.name] = tool({
+			description: v.description,
+			inputSchema: jsonSchema(v.parameters as JSONSchema7),
+		});
+	}
+	return out;
+}
+
+function synthesizeResponse(
+	text: string,
+	reasoning: string,
+	toolCalls: ToolCallRecord[],
+): ResponseMessageRecord[] {
+	const content: unknown[] = [];
+	if (reasoning) content.push({ type: "reasoning", text: reasoning });
+	if (text) content.push({ type: "text", text });
+	for (const c of toolCalls) {
+		content.push({ type: "tool-call", toolCallId: c.toolCallId, toolName: c.toolName, input: c.args });
+	}
+	return [{ role: "assistant", content }];
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+	return value && typeof value === "object" && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: {};
+}
+
+function toError(error: unknown): Error {
+	return error instanceof Error ? error : new Error(String(error));
+}
