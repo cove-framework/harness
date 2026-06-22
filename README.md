@@ -15,6 +15,35 @@ underneath is replaced:
 See **[PLAN.md](./PLAN.md)** for the full architecture mapping, locked decisions, module
 layout, and phase roadmap.
 
+## Install
+
+Cove ships as **two halves** because a Convex backend can't be an ordinary npm import —
+Convex deploys functions from *your own* `convex/` directory.
+
+```bash
+# 1. Install the CLI + client surfaces.
+npm install cove
+
+# 2. Scaffold a project (vendors the backend you own + an example agent).
+npx cove init my-agent
+cd my-agent && npm install
+npx convex dev          # link a Convex deployment
+npm run dev             # cove dev: codegen + validate, then convex dev
+```
+
+- **npm package (`cove`)** — the `cove` CLI plus the client/authoring surfaces, imported via
+  subpath exports built to `dist/`:
+  - `cove/runtime` — the V8-safe core (`createAgent`, `defineTool`, types).
+  - `cove/sdk` — the Convex-native consumer client (`createCoveReactiveClient`, no SSE).
+  - `cove/react` — `CoveProvider` + hooks (`useAgentPrompt`, `useCoveRun`, …).
+  - `cove/cli` — `defineCoveConfig` + programmatic build/codegen entry points.
+- **`cove init` scaffold** — copies this package's `convex/` engine + `src/runtime/` core into
+  your project (you own and deploy them), then writes `cove.config.ts`, a starter
+  `agentRegistry.ts`, env/tsconfig, and a README.
+
+Build the package from source with `npm run build` (tsup → `dist/`); `npm pack` produces the
+publishable tarball (`prepack` runs the build).
+
 ## Status
 
 Early scaffold. Built phase-by-phase per the roadmap in `PLAN.md`. The portable, V8-safe

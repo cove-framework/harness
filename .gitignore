@@ -23,6 +23,9 @@ build/
 out/
 *.tsbuildinfo
 
+# npm pack artifact
+*.tgz
+
 # Test / coverage
 coverage/
 .vitest/

@@ -1,14 +1,47 @@
 {
   "name": "cove",
   "type": "module",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
   "description": "Cove — a Convex-native agent harness (rewrite of the flue framework)",
+  "license": "MIT",
+  "homepage": "https://github.com/cove-framework/harness#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cove-framework/harness.git"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "files": [
+    "dist",
+    "bin",
+    "convex",
+    "src/runtime",
+    "README.md",
+    "!**/__tests__/**",
+    "!**/*.test.ts",
+    "!**/*.map",
+    "!convex/_generated/**",
+    "!convex/_cove/**"
+  ],
   "exports": {
-    "./runtime": "./src/runtime/index.ts",
-    "./sdk": "./src/sdk/index.ts",
-    "./react": "./src/react/index.ts",
-    "./cli": "./src/cli/index.ts"
+    "./runtime": {
+      "types": "./dist/runtime/index.d.ts",
+      "import": "./dist/runtime/index.js"
+    },
+    "./sdk": {
+      "types": "./dist/sdk/index.d.ts",
+      "import": "./dist/sdk/index.js"
+    },
+    "./react": {
+      "types": "./dist/react/index.d.ts",
+      "import": "./dist/react/index.js"
+    },
+    "./cli": {
+      "types": "./dist/cli/index.d.ts",
+      "import": "./dist/cli/index.js"
+    },
+    "./package.json": "./package.json"
   },
   "bin": {
     "cove": "./bin/cove.mjs"
@@ -22,12 +55,15 @@
     }
   },
   "scripts": {
+    "build": "tsup",
     "convex": "convex dev",
     "deploy": "convex deploy",
     "cove": "tsx bin/cove.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run build && npm run typecheck && npm test"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^2.0.0",
@@ -60,6 +96,7 @@
     "happy-dom": "^20.10.6",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
+    "tsup": "^8.5.1",
     "tsx": "^4.21.0",
     "typescript": "^6",
     "vitest": "^4.1.5"

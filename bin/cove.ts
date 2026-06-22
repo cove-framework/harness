@@ -15,18 +15,37 @@ import { dev } from "../src/cli/commands/dev.ts";
 import { createEnvLoader, selectEnvFile } from "../src/cli/lib/env.ts";
 import { resolveConfigPath } from "../src/cli/lib/config.ts";
 import { error as cliError } from "../src/cli/lib/terminal.ts";
+import { initProject } from "../src/cli/commands/init.ts";
+
+// Injected by tsup at build time (define). Undefined when running from source via tsx (dev) — then we read
+// package.json relative to this file's location.
+declare const __COVE_VERSION__: string | undefined;
+
+function coveVersion(): string {
+	if (typeof __COVE_VERSION__ === "string") return __COVE_VERSION__;
+	try {
+		const pkg = JSON.parse(
+			fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+		) as { version: string };
+		return pkg.version;
+	} catch {
+		return "0.0.0";
+	}
+}
 
 // ─── Usage ─────────────────────────────────────────────────────────────────
 
 function printUsage(log: (message: string) => void = console.error) {
 	log(
 		"Usage:\n" +
+			"  cove init   [<dir>] [--force]\n" +
 			"  cove dev    [--root <path>] [--config <path>] [--env <path>]\n" +
 			"  cove build  [--root <path>] [--config <path>] [--env <path>] [--skip-typecheck]\n" +
 			"  cove deploy [--root <path>] [--config <path>] [--env <path>]\n" +
 			"  cove add    (deferred — m7)\n" +
 			"\n" +
 			"Commands:\n" +
+			"  init   Scaffold a new Cove project (backend + an example agent) into <dir> (default: cwd).\n" +
 			"  dev    Run codegen + validation, then start `convex dev`; re-codegen on config/registry change.\n" +
 			"  build  Load → validate → codegen → `tsc --noEmit`. Writes only changed files.\n" +
 			"  deploy Build (fail-closed: validate before any deploy), then `convex deploy`.\n" +
@@ -66,8 +85,15 @@ interface DeployArgs extends CommonArgs {
 interface AddArgs {
 	command: "add";
 }
+interface InitArgs {
+	command: "init";
+	/** Target directory (positional), or undefined for cwd. */
+	dir: string | undefined;
+	/** Overwrite an existing non-empty directory. */
+	force: boolean;
+}
 
-type ParsedArgs = DevArgs | BuildArgs | DeployArgs | AddArgs;
+type ParsedArgs = DevArgs | BuildArgs | DeployArgs | AddArgs | InitArgs;
 
 const PARSE_OPTIONS = {
 	root: { type: "string" },
@@ -121,6 +147,29 @@ function pathFlag(value: string | undefined, flag: string): string | undefined {
 	return v ? path.resolve(v) : undefined;
 }
 
+function parseInit(args: string[]): InitArgs {
+	const parsed = parseNodeArgs({
+		args,
+		options: { force: { type: "boolean" } },
+		allowPositionals: true,
+		strict: false,
+		tokens: true,
+	});
+	for (const token of parsed.tokens ?? []) {
+		if (token.kind === "option" && token.rawName !== "--force") {
+			fail(`Unknown flag for \`cove init\`: ${token.rawName}`, true);
+		}
+	}
+	if (parsed.positionals.length > 1) {
+		fail(`Unexpected argument for \`cove init\`: ${parsed.positionals[1]}`, true);
+	}
+	return {
+		command: "init",
+		dir: parsed.positionals[0],
+		force: (parsed.values as { force?: boolean }).force === true,
+	};
+}
+
 function parseArgs(argv: string[]): ParsedArgs {
 	const [command, ...rest] = argv;
 
@@ -129,16 +178,14 @@ function parseArgs(argv: string[]): ParsedArgs {
 		process.exit(0);
 	}
 	if (command === "--version" || command === "-v") {
-		const pkg = JSON.parse(
-			fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"),
-		) as { version: string };
-		console.log(pkg.version);
+		console.log(coveVersion());
 		process.exit(0);
 	}
 
 	if (command === "add") {
 		return { command: "add" };
 	}
+	if (command === "init") return parseInit(rest);
 	if (command === "dev") return { command: "dev", ...parseCommon("dev", rest) };
 	if (command === "build") return { command: "build", ...parseCommon("build", rest) };
 	if (command === "deploy") return { command: "deploy", ...parseCommon("deploy", rest) };
@@ -173,6 +220,16 @@ async function main() {
 	if (args.command === "add") {
 		console.error("[cove] cove add is deferred (m7); see roadmap P8.5.");
 		process.exit(0);
+	}
+
+	if (args.command === "init") {
+		try {
+			await initProject({ dir: args.dir, force: args.force });
+			return;
+		} catch (err) {
+			cliError(err instanceof Error ? err.message : String(err));
+			process.exit(1);
+		}
 	}
 
 	loadCliEnvironment(args);

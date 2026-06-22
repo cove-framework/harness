@@ -16,6 +16,8 @@ export { build } from "./commands/build.ts";
 export type { BuildOptions, BuildResult } from "./commands/build.ts";
 export { deploy } from "./commands/deploy.ts";
 export { dev } from "./commands/dev.ts";
+export { initProject } from "./commands/init.ts";
+export type { InitOptions } from "./commands/init.ts";
 
 // Codegen entry functions.
 export { generateAgentResolver, renderAgentResolver } from "./codegen/generate-agent-registry.ts";

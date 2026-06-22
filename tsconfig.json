@@ -14,8 +14,9 @@
     "forceConsistentCasingInFileNames": true,
     "isolatedModules": true,
     "resolveJsonModule": true,
+    "ignoreDeprecations": "6.0",
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "convex/**/*.ts", "bin/**/*.ts"],
-  "exclude": ["node_modules", "examples"]
+  "include": ["src/**/*.ts", "src/**/*.tsx", "convex/**/*.ts", "bin/**/*.ts", "tsup.config.ts"],
+  "exclude": ["node_modules", "examples", "dist"]
 }
