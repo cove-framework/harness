@@ -50,11 +50,13 @@
   },
   "devDependencies": {
     "@ai-sdk/provider-utils": "^3.0.0",
+    "@edge-runtime/vm": "^5.0.0",
     "@testing-library/react": "^16.3.2",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^25",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
+    "convex-test": "^0.0.53",
     "happy-dom": "^20.10.6",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
