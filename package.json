@@ -7,7 +7,11 @@
   "exports": {
     "./runtime": "./src/runtime/index.ts",
     "./sdk": "./src/sdk/index.ts",
-    "./react": "./src/react/index.ts"
+    "./react": "./src/react/index.ts",
+    "./cli": "./src/cli/index.ts"
+  },
+  "bin": {
+    "cove": "./bin/cove.mjs"
   },
   "peerDependencies": {
     "react": ">=18"
@@ -20,6 +24,7 @@
   "scripts": {
     "convex": "convex dev",
     "deploy": "convex deploy",
+    "cove": "tsx bin/cove.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"

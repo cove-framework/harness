@@ -873,12 +873,12 @@ type CoveEventVariant =
 	| {
 			type: "operation_start";
 			operationId: string;
-			operationKind: "prompt" | "skill" | "task" | "shell" | "compact";
+			operationKind: "prompt" | "skill" | "task" | "shell" | "compact" | "workflow";
 	  }
 	| {
 			type: "operation";
 			operationId: string;
-			operationKind: "prompt" | "skill" | "task" | "shell" | "compact";
+			operationKind: "prompt" | "skill" | "task" | "shell" | "compact" | "workflow";
 			durationMs: number;
 			isError: boolean;
 			error?: unknown;
