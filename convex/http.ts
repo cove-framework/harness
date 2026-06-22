@@ -11,18 +11,13 @@ import { httpRouter } from "convex/server";
 import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { type ActionCtx, httpAction } from "./_generated/server";
-import {
-	parseSlackPayload,
-	slackDedupKey,
-	slackSessionRef,
-	verifySlackSignature,
-} from "../src/runtime/channels/slack.ts";
+import { channelRegistry } from "./channels/index.ts";
+import { verifyThenAdmit } from "./channels/inbound.ts";
 import {
 	InvalidJsonError,
 	InvalidRequestError,
 	renderHttpError,
 	RunNotFoundError,
-	UnauthorizedError,
 	UnsupportedMediaTypeError,
 	validateAgentRequest,
 	WorkflowNotFoundError,
@@ -138,55 +133,23 @@ http.route({
 	}),
 });
 
-// POST /channels/slack — inbound webhook (doc 06 P11): answer the url_verification handshake, verify the
-// signature, dedup the event, then map it onto a submit. Outbound reply (posting the run result back) needs
-// the Slack bot token + a run-completion hook — the P11 remainder. Other channels follow this same shape.
+// POST /channels/:name — inbound webhook (doc 06 P11). One generic route resolves the ChannelAdapter from the
+// path segment and runs the shared pipeline (authorize → verify → dedup → submit → ack). The outbound reply
+// is posted after the run terminalizes (convex/channels/reply.ts), never inside this ack window. An unknown
+// channel → 404. The eight ship-first adapters live in convex/channels/<name>/.
 http.route({
-	path: "/channels/slack",
+	pathPrefix: "/channels/",
 	method: "POST",
 	handler: httpAction(async (ctx, req) => {
-		try {
-			const rawBody = await req.text();
-			let payload: unknown;
-			try {
-				payload = JSON.parse(rawBody);
-			} catch {
-				throw new InvalidJsonError();
-			}
-			const parsed = parseSlackPayload(payload);
-			if (parsed.kind === "challenge") {
-				return Response.json({ challenge: parsed.challenge });
-			}
-
-			const secret = process.env.SLACK_SIGNING_SECRET;
-			if (!secret) throw new UnauthorizedError("[cove] Slack signing secret not configured.");
-			const verified = await verifySlackSignature({
-				signingSecret: secret,
-				timestamp: req.headers.get("x-slack-request-timestamp") ?? "",
-				rawBody,
-				signature: req.headers.get("x-slack-signature") ?? "",
-			});
-			if (!verified) throw new UnauthorizedError("[cove] invalid Slack signature.");
-
-			if (parsed.kind === "ignore") return new Response("ok");
-
-			// Idempotent dedup (replayed deliveries are no-ops).
-			const { isNew } = await ctx.runMutation(internal.channels.markWebhookSeen, {
-				key: slackDedupKey(parsed.eventId),
-			});
-			if (!isNew) return new Response("ok (duplicate)");
-
-			const ref = slackSessionRef(parsed.team, parsed.channel);
-			await ctx.runMutation(api.invoke.submit.submitPrompt, {
-				prompt: parsed.message,
-				instanceId: ref.instanceId,
-				sessionName: ref.sessionName,
-			});
-			return new Response("ok");
-		} catch (err) {
-			const { status, body } = renderHttpError(err);
-			return Response.json(body, { status });
+		const name = pathSegments(req)[1];
+		const adapter = name ? channelRegistry[name] : undefined;
+		if (!adapter) {
+			return Response.json(
+				{ error: { code: "channel_not_found", message: `[cove] unknown channel "${name ?? ""}"` } },
+				{ status: 404 },
+			);
 		}
+		return verifyThenAdmit(ctx, adapter, req);
 	}),
 });
 

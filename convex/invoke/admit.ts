@@ -10,6 +10,7 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import type { AgentMessage } from "../../src/runtime/messages.ts";
 import type { McpServerOptions } from "../../src/runtime/mcp-types.ts";
 import { assertPublicSessionName } from "../../src/runtime/session-identity.ts";
+import type { ReplyContext } from "../channels/types.ts";
 import { appendCanonicalEntry, generateAffinityKey } from "../sessions/persist.ts";
 import { workflow } from "../workflow.ts";
 
@@ -90,6 +91,8 @@ export interface AdmitPromptArgs extends SessionRef {
 	approvalTools?: string[];
 	/** Declared MCP servers (G2.2); discovered + frozen as kind:"mcp" plan tools at setup. */
 	mcpServers?: McpServerOptions[];
+	/** Channel reply-address (G2.3); frozen on the request so the post-finalize reply can address the channel. */
+	replyContext?: ReplyContext;
 	/** Supersede any in-flight request on the session before admitting (doc 06 P6 concurrent-prompt gate). */
 	supersede: boolean;
 }
@@ -120,6 +123,7 @@ export async function admitPrompt(ctx: MutationCtx, args: AdmitPromptArgs): Prom
 		resultSchema: args.resultSchema,
 		approvalTools: args.approvalTools,
 		mcpServers: args.mcpServers,
+		replyContext: args.replyContext,
 		createdAt: now,
 		updatedAt: now,
 	});

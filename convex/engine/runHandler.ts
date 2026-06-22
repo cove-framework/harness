@@ -84,9 +84,13 @@ export const agentRun = workflow.define({
 			);
 		} catch (error) {
 			// A result-schema run that gave up / exhausted follow-ups already finalized the request as
-			// failed; swallow the signal so the workflow doesn't enter a retry loop.
-			if (error instanceof ResultUnavailableError) return;
-			throw error;
+			// failed; swallow the signal (don't retry) but still fall through to post the channel reply.
+			if (!(error instanceof ResultUnavailableError)) throw error;
 		}
+
+		// Post-finalize channel reply (G2.3): a journaled, replay-idempotent step (the repliedAt stamp makes
+		// a re-dispatch a no-op). No-op for native/HTTP runs (no replyContext). This is the ONLY engine touch
+		// for channels and changes no loop semantics. Non-terminal (re-thrown) errors above never reach here.
+		await step.runAction(internal.channels.reply.dispatch, { requestId });
 	},
 });

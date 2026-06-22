@@ -183,6 +183,19 @@ export default defineSchema({
     approvalTools: v.optional(v.array(v.string())),
     // Declared MCP servers (G2.2). Discovered + frozen as kind:"mcp" plan tools at setup.
     mcpServers: v.optional(v.array(v.any())),
+    // Channel reply-address (G2.3): captured at admission for an inbound webhook run so the outbound reply
+    // can address the channel after the run terminalizes. Absent for native/HTTP runs. No separate table (D14).
+    replyContext: v.optional(
+      v.object({
+        provider: v.string(),
+        target: v.string(),
+        threadId: v.optional(v.string()),
+        responseUrl: v.optional(v.string()),
+        addressing: v.optional(v.any()),
+      }),
+    ),
+    // Set once the outbound reply has been posted (the replay double-post guard).
+    repliedAt: v.optional(v.number()),
     // The skill ref / subagent name for kind="skill"/"task".
     target: v.optional(v.string()),
     // Nested task-delegation depth (0 = top-level); child = parent+1, bounded by MAX_TASK_DEPTH (doc 04).
