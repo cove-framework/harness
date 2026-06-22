@@ -165,11 +165,15 @@ export default defineSchema({
     instanceId: v.string(),
     submissionId: v.string(), // correlates events; returned to the caller
 
+    // NOTE (D18): the design describes a `runs.kind: agent|workflow` discriminator; the shipped code uses
+    // this agentRequests.kind. G2.4 adds "workflow" here (no parallel runs table) so a workflow invoke is a
+    // distinct run kind from an agent prompt.
     kind: v.union(
       v.literal("prompt"),
       v.literal("skill"),
       v.literal("task"),
       v.literal("compact"),
+      v.literal("workflow"),
     ),
     input: v.union(v.string(), v.null()),
     // Image attachments on the user turn (hashes into imageChunks; never raw

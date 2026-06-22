@@ -5,7 +5,13 @@
 
 import { v } from "convex/values";
 import { mutation } from "../_generated/server";
-import { type AdmitResult, admitPrompt, cancelActiveRequests, findSessionId } from "./admit.ts";
+import {
+	type AdmitResult,
+	admitPrompt,
+	admitWorkflow,
+	cancelActiveRequests,
+	findSessionId,
+} from "./admit.ts";
 
 export const submitPrompt = mutation({
 	args: {
@@ -18,6 +24,8 @@ export const submitPrompt = mutation({
 		approvalTools: v.optional(v.array(v.string())),
 		mcpServers: v.optional(v.array(v.any())),
 		replyContext: v.optional(v.any()),
+		// Registered agent name (G2.4) — from POST /agents/:name; sourced for the model/profile at setup.
+		agent: v.optional(v.string()),
 	},
 	handler: async (ctx, args): Promise<AdmitResult> =>
 		admitPrompt(ctx, {
@@ -30,7 +38,26 @@ export const submitPrompt = mutation({
 			approvalTools: args.approvalTools,
 			mcpServers: args.mcpServers,
 			replyContext: args.replyContext,
+			agent: args.agent,
 			supersede: true,
+		}),
+});
+
+/** Admit a workflow invoke as a distinct kind:"workflow" run (D18). Bound to POST /workflows/:name by codegen. */
+export const submitWorkflow = mutation({
+	args: {
+		name: v.string(),
+		input: v.optional(v.any()),
+		instanceId: v.optional(v.string()),
+		sessionName: v.optional(v.string()),
+	},
+	handler: async (ctx, args): Promise<AdmitResult> =>
+		admitWorkflow(ctx, {
+			name: args.name,
+			input: args.input,
+			instanceId: args.instanceId ?? `workflow:${args.name}`,
+			harnessName: "default",
+			sessionName: args.sessionName ?? "default",
 		}),
 });
 

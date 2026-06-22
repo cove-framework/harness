@@ -93,6 +93,9 @@ export interface AdmitPromptArgs extends SessionRef {
 	mcpServers?: McpServerOptions[];
 	/** Channel reply-address (G2.3); frozen on the request so the post-finalize reply can address the channel. */
 	replyContext?: ReplyContext;
+	/** Registered agent name (G2.4) — from POST /agents/:name; stored as the request target so setup can
+	 *  resolve the agent's model/profile via getRegisteredAgent. */
+	agent?: string;
 	/** Supersede any in-flight request on the session before admitting (doc 06 P6 concurrent-prompt gate). */
 	supersede: boolean;
 }
@@ -117,6 +120,7 @@ export async function admitPrompt(ctx: MutationCtx, args: AdmitPromptArgs): Prom
 		submissionId,
 		kind: "prompt",
 		input: args.prompt,
+		target: args.agent,
 		status: "pending",
 		model: args.model ?? "cove-test/mock",
 		expectsResult: args.resultSchema !== undefined ? true : undefined,
@@ -129,6 +133,47 @@ export async function admitPrompt(ctx: MutationCtx, args: AdmitPromptArgs): Prom
 	});
 
 	const userMessage: AgentMessage = { role: "user", content: args.prompt, timestamp: now };
+	await appendCanonicalEntry(ctx, sessionId, `u-${requestId}`, userMessage, now);
+
+	const workflowId = await workflow.start(ctx, internal.engine.runHandler.agentRun, { requestId });
+	await ctx.db.patch(requestId, { convexWorkflowId: workflowId });
+
+	return { sessionId, requestId, submissionId, workflowId };
+}
+
+export interface AdmitWorkflowArgs extends SessionRef {
+	/** Registered workflow name (the /workflows/:name segment / target). */
+	name: string;
+	input: unknown;
+}
+
+/**
+ * Admit a workflow invoke as a DISTINCT run kind (D18). G2.4 ships the minimal distinct-run-kind path: it
+ * creates a kind:"workflow" agentRequests row (target = the workflow name) and starts the durable run. The
+ * rich workflow-handler execution (CoveContext orchestration) lands in G2.5; until then the run reuses
+ * agentRun over the serialized input. Observable as kind:"workflow", separate from a kind:"prompt" agent run.
+ */
+export async function admitWorkflow(ctx: MutationCtx, args: AdmitWorkflowArgs): Promise<AdmitResult> {
+	assertPublicSessionName(args.sessionName);
+	const sessionId = await getOrCreateSessionId(ctx, args);
+
+	const now = Date.now();
+	const submissionId = crypto.randomUUID();
+	const inputText = typeof args.input === "string" ? args.input : JSON.stringify(args.input ?? null);
+	const requestId = await ctx.db.insert("agentRequests", {
+		sessionId,
+		instanceId: args.instanceId,
+		submissionId,
+		kind: "workflow",
+		input: inputText,
+		target: args.name,
+		status: "pending",
+		model: "cove-test/mock",
+		createdAt: now,
+		updatedAt: now,
+	});
+
+	const userMessage: AgentMessage = { role: "user", content: inputText, timestamp: now };
 	await appendCanonicalEntry(ctx, sessionId, `u-${requestId}`, userMessage, now);
 
 	const workflowId = await workflow.start(ctx, internal.engine.runHandler.agentRun, { requestId });

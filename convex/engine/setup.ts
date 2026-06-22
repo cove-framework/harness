@@ -7,6 +7,12 @@
 
 import { v } from "convex/values";
 import { internalMutation } from "../_generated/server";
+// Side-effect import: installs the agent registry into this isolate so getRegisteredAgent(name) resolves
+// (G2.4). In a user project, cove codegen emits _cove/agentResolver.ts from the project's registry.
+import "../_cove/agentResolver.ts";
+import { getRegisteredAgent } from "../agentRegistry.ts";
+import { resolveAgentProfile } from "../../src/runtime/agent-definition.ts";
+import type { AgentCreateContext } from "../../src/runtime/types.ts";
 import type { McpToolDescriptor } from "../../src/runtime/mcp-types.ts";
 import type { SessionEnv } from "../../src/runtime/types.ts";
 import { emitFromMutation } from "../events/emit.ts";
@@ -34,7 +40,28 @@ export const run = internalMutation({
 		const session = await ctx.db.get(request.sessionId);
 		if (!session) throw new Error(`[cove] session for request ${requestId} not found`);
 
-		const model = request.model ?? session.model ?? "cove-test/mock";
+		// G2.4: when this prompt addresses a registered agent by name (target), source its model + instructions
+		// from the registry; otherwise fall back so dev submits without a registry still run. The rich
+		// initializer context (payload/env) is G2.5 — here we run it best-effort and degrade on any error.
+		let registeredModel: string | undefined;
+		let registeredInstructions: string | undefined;
+		if (request.kind === "prompt" && request.target) {
+			const created = getRegisteredAgent(request.target);
+			if (created) {
+				try {
+					const config = await created.initialize({
+						id: request.instanceId,
+					} as AgentCreateContext);
+					const profile = resolveAgentProfile(config);
+					if (typeof profile.model === "string") registeredModel = profile.model;
+					registeredInstructions = profile.instructions;
+				} catch {
+					// fall through to the request/session model
+				}
+			}
+		}
+
+		const model = registeredModel ?? request.model ?? session.model ?? "cove-test/mock";
 		const maxSteps = DEFAULT_MAX_STEPS;
 		const maxFollowUps = DEFAULT_MAX_FOLLOWUPS;
 		const hasResultSchema = request.expectsResult === true && request.resultSchema !== undefined;
@@ -54,6 +81,7 @@ export const run = internalMutation({
 		tools.push({ name: "task", description: TASK_DESCRIPTION, parameters: TASK_PARAMS, kind: "task" });
 
 		const sections: string[] = [SYSTEM_PREAMBLE];
+		if (registeredInstructions) sections.push(registeredInstructions);
 
 		// Skills catalog (D13): offer activate_skill + render the ## Available Skills registry when the
 		// catalog has active skills. activate_skill resolves a skill by name from the catalog (a Convex

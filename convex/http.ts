@@ -11,6 +11,9 @@ import { httpRouter } from "convex/server";
 import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { type ActionCtx, httpAction } from "./_generated/server";
+// Side-effect + lookup: installs the workflow registry into this isolate so the /workflows route resolves a
+// handler by name (G2.4). In a user project, cove codegen emits _cove/workflowResolver.ts.
+import { getRegisteredWorkflow } from "./_cove/workflowResolver.ts";
 import { channelRegistry } from "./channels/index.ts";
 import { verifyThenAdmit } from "./channels/inbound.ts";
 import {
@@ -75,6 +78,7 @@ http.route({
 				instanceId: id,
 				sessionName: sessionName ?? "default",
 				resultSchema,
+				agent: segs[1], // the :name segment — setup resolves it via getRegisteredAgent (G2.4)
 			});
 			if (new URL(req.url).searchParams.get("wait") === "result") {
 				const snap = await pollTerminal(ctx, admitted.requestId);
@@ -121,15 +125,36 @@ http.route({
 	}),
 });
 
-// POST /workflows/:name — first-class (D18); the defineWorkflow registry + codegen land in P8.5, so until
-// then an invoke resolves to WorkflowNotFoundError (the route + error envelope are live now).
+// POST /workflows/:name — first-class workflow surface (D18). Resolves the registered handler by name and
+// admits a DISTINCT kind:"workflow" run (G2.4). An unknown workflow still returns WorkflowNotFoundError. The
+// workflow registry is installed by the _cove/workflowResolver side-effect import above; cove codegen emits
+// that resolver in a user project. The rich workflow-handler execution lands in G2.5.
 http.route({
 	pathPrefix: "/workflows/",
 	method: "POST",
-	handler: httpAction(async (_ctx, req) => {
-		const name = pathSegments(req)[1] ?? "";
-		const { status, body } = renderHttpError(new WorkflowNotFoundError(name));
-		return Response.json(body, { status });
+	handler: httpAction(async (ctx, req) => {
+		try {
+			const name = pathSegments(req)[1];
+			if (!name) throw new InvalidRequestError("expected /workflows/:name");
+			await runAuthorize(ctx, req);
+			if (!getRegisteredWorkflow(name)) throw new WorkflowNotFoundError(name);
+			let input: unknown;
+			try {
+				input = await req.json();
+			} catch {
+				input = undefined; // an empty/absent body is allowed
+			}
+			const admitted = await ctx.runMutation(api.invoke.submit.submitWorkflow, { name, input });
+			return Response.json({
+				sessionId: admitted.sessionId,
+				requestId: admitted.requestId,
+				submissionId: admitted.submissionId,
+				runId: admitted.requestId,
+			});
+		} catch (err) {
+			const { status, body } = renderHttpError(err);
+			return Response.json(body, { status });
+		}
 	}),
 });
 
