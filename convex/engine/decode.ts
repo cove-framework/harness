@@ -17,6 +17,10 @@
 import type { JSONSchema7, LanguageModelV2 } from "@ai-sdk/provider";
 import { jsonSchema, type ModelMessage, streamText, tool } from "ai";
 import type { AgentMessage, ModelHandle } from "../../src/runtime/messages.ts";
+import {
+	type CompactionSettings,
+	shouldCompact as evalShouldCompact,
+} from "../../src/runtime/compaction.ts";
 import type { CoveEventInput, PromptUsage } from "../../src/runtime/types.ts";
 import { DeltaBatcher, type DeltaBatcherOptions, type DeltaPatch } from "./deltaBatcher.ts";
 import type { ModelToolView, StepDecision, ToolCallRecord } from "./types.ts";
@@ -50,6 +54,8 @@ export interface ExistingStep {
 	finishReason?: string;
 	text?: string;
 	toolCalls?: ToolCallRecord[];
+	/** Persisted per-step usage — the replay path computes the same shouldCompact from it (G2.5). */
+	usage?: PromptUsage;
 }
 
 /** Injected persistence port — wired to Convex mutations/queries by the llmStep action. */
@@ -75,6 +81,12 @@ export interface DecodeDeps {
 	 * tool_start/message_end/turn events off the AI SDK fullStream + the finalized step.
 	 */
 	emit?: (event: CoveEventInput) => Promise<void>;
+	/**
+	 * Frozen compaction settings + the model context window (G2.5). When present + enabled, the step decision's
+	 * `shouldCompact` is computed from the finalized step's persisted usage vs `contextWindow - reserveTokens`.
+	 * Absent (or disabled / contextWindow 0) → `shouldCompact` stays false (overflow + explicit still run).
+	 */
+	compaction?: { settings: CompactionSettings; contextWindow: number };
 }
 
 export interface DecodeInput {
@@ -93,7 +105,7 @@ export interface DecodeInput {
  */
 export async function runDecode(input: DecodeInput, deps: DecodeDeps): Promise<StepDecision> {
 	const existing = await deps.loadStep();
-	if (existing?.isFinalized) return reconstructDecision(existing);
+	if (existing?.isFinalized) return reconstructDecision(existing, deps);
 
 	await deps.insertStreaming();
 
@@ -242,7 +254,7 @@ export async function runDecode(input: DecodeInput, deps: DecodeDeps): Promise<S
 		});
 	}
 
-	return decisionFromFinalized(finalized);
+	return decisionFromFinalized(finalized, deps);
 }
 
 /**
@@ -269,23 +281,32 @@ function assistantContentBlocks(
 	return content;
 }
 
+/** Threshold compaction (G2.5): fire when this step's persisted usage crosses contextWindow − reserveTokens. */
+function compactionDecision(deps: DecodeDeps, usage: PromptUsage | undefined): boolean {
+	if (!deps.compaction || !usage) return false;
+	const contextTokens =
+		usage.totalTokens || usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+	return evalShouldCompact(contextTokens, deps.compaction.contextWindow, deps.compaction.settings);
+}
+
 /** Reconstruct the step decision from a finalized row — the replay path (no model call). */
-export function reconstructDecision(existing: ExistingStep): StepDecision {
+export function reconstructDecision(existing: ExistingStep, deps: DecodeDeps): StepDecision {
 	return {
 		finishReason: existing.finishReason ?? "stop",
 		toolCalls: existing.toolCalls ?? [],
 		text: existing.text ?? "",
-		shouldCompact: false,
+		// Replay-stable: computed from the SAME persisted usage as the live path, so the compact branch re-takes.
+		shouldCompact: compactionDecision(deps, existing.usage),
 	};
 }
 
-function decisionFromFinalized(step: FinalizedStep): StepDecision {
+function decisionFromFinalized(step: FinalizedStep, deps: DecodeDeps): StepDecision {
 	return {
 		finishReason: step.finishReason,
 		toolCalls: step.toolCalls,
 		text: step.text,
-		// Proactive-threshold compaction lands P12; the seam stays false in P4.
-		shouldCompact: false,
+		// Threshold compaction (G2.5): from this step's finalized usage vs the frozen window/reserve.
+		shouldCompact: compactionDecision(deps, step.usage),
 	};
 }
 

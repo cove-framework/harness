@@ -38,6 +38,21 @@ export function isRetryableThrown(error: unknown): boolean {
 	return isRetryableErrorMessage(getErrorMessage(error));
 }
 
+/**
+ * Context-overflow classifier (G2.5 seam). Distinct from {@link isRetryableModelError}: a context-overflow is
+ * NOT a transient error — it is the signal to compact-then-retry the SAME step (overflow mode 2). The
+ * same-`stepNumber` retry hook + the E2E proof (overflow → compact → retry, no double-charge) land in G2.6;
+ * this is the reusable predicate both the loop hook and the test use.
+ */
+const CONTEXT_OVERFLOW_PATTERN =
+	/context (?:length|window)|maximum context|context.{0,20}exceed|exceed.{0,20}context|prompt is too long|input is too long|too many tokens|maximum.{0,20}tokens|reduce the (?:length|amount)/i;
+
+/** Whether an error message/value indicates the provider rejected the request for exceeding the context window. */
+export function isContextOverflow(input: string | unknown): boolean {
+	const message = typeof input === "string" ? input : getErrorMessage(input);
+	return CONTEXT_OVERFLOW_PATTERN.test(message);
+}
+
 /** A canonical assistant response that terminalized normally (flue parity). */
 export function isCompletedAssistantResponse(message: AssistantMessage): boolean {
 	return message.stopReason === "stop" || message.stopReason === "length";

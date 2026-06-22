@@ -38,6 +38,8 @@ function fakeTransport(opts?: {
 			calls.submissions.push(s);
 			return { requestId: "req-1" };
 		},
+		submitSkill: async () => ({ requestId: "req-skill" }),
+		submitCompact: async () => ({ requestId: "req-compact" }),
 		awaitTerminal: async (_id, signal) =>
 			opts?.awaitImpl
 				? opts.awaitImpl(signal)

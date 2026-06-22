@@ -12,10 +12,17 @@ import { internalMutation } from "../_generated/server";
 import "../_cove/agentResolver.ts";
 import { getRegisteredAgent } from "../agentRegistry.ts";
 import { resolveAgentProfile } from "../../src/runtime/agent-definition.ts";
-import type { AgentCreateContext } from "../../src/runtime/types.ts";
+import { deriveCompactionDefaults } from "../../src/runtime/compaction.ts";
+import type { AgentCreateContext, CompactionConfig } from "../../src/runtime/types.ts";
 import type { McpToolDescriptor } from "../../src/runtime/mcp-types.ts";
 import type { SessionEnv } from "../../src/runtime/types.ts";
+import { lookupCaps } from "../providers/capabilities.ts";
 import { emitFromMutation } from "../events/emit.ts";
+
+/** Frozen compaction settings on the plan (G2.5). `false` = threshold disabled (overflow + explicit still run). */
+type FrozenCompaction =
+	| false
+	| { enabled: true; reserveTokens: number; keepRecentTokens: number; contextWindow: number };
 import { createFrameworkTools } from "./frameworkTools.ts";
 import { buildResultFooter, createResultToolsFromJsonSchema } from "./resultTools.ts";
 import { TASK_DESCRIPTION, TASK_PARAMS } from "./task.ts";
@@ -45,6 +52,7 @@ export const run = internalMutation({
 		// initializer context (payload/env) is G2.5 — here we run it best-effort and degrade on any error.
 		let registeredModel: string | undefined;
 		let registeredInstructions: string | undefined;
+		let registeredCompaction: false | CompactionConfig | undefined;
 		if (request.kind === "prompt" && request.target) {
 			const created = getRegisteredAgent(request.target);
 			if (created) {
@@ -55,6 +63,7 @@ export const run = internalMutation({
 					const profile = resolveAgentProfile(config);
 					if (typeof profile.model === "string") registeredModel = profile.model;
 					registeredInstructions = profile.instructions;
+					registeredCompaction = profile.compaction;
 				} catch {
 					// fall through to the request/session model
 				}
@@ -64,6 +73,29 @@ export const run = internalMutation({
 		const model = registeredModel ?? request.model ?? session.model ?? "cove-test/mock";
 		const maxSteps = DEFAULT_MAX_STEPS;
 		const maxFollowUps = DEFAULT_MAX_FOLLOWUPS;
+
+		// Compaction settings (G2.5): derive from model caps (V8-safe lookupCaps — no AI SDK, setup stays a
+		// mutation) + freeze onto the plan. Honor the profile `compaction:false`. Unknown model → contextWindow
+		// 0 → threshold disabled by shouldCompact() (overflow + explicit session.compact() still run).
+		let compaction: FrozenCompaction;
+		if (registeredCompaction === false) {
+			compaction = false;
+		} else {
+			const slash = model.indexOf("/");
+			const caps =
+				slash > 0 ? lookupCaps(model.slice(0, slash), model.slice(slash + 1)) : undefined;
+			const derived = deriveCompactionDefaults({
+				contextWindow: caps?.contextWindow ?? 0,
+				maxTokens: caps?.maxOutputTokens ?? 0,
+			});
+			const override = registeredCompaction ?? {};
+			compaction = {
+				enabled: true,
+				reserveTokens: override.reserveTokens ?? derived.reserveTokens,
+				keepRecentTokens: override.keepRecentTokens ?? derived.keepRecentTokens,
+				contextWindow: caps?.contextWindow ?? 0,
+			};
+		}
 		const hasResultSchema = request.expectsResult === true && request.resultSchema !== undefined;
 
 		// Frozen tool descriptors (schema only; execute is rebound per action). A stub env is safe here
@@ -157,6 +189,7 @@ export const run = internalMutation({
 				cwd: session.plan?.cwd,
 				resultSchema: hasResultSchema ? request.resultSchema : undefined,
 				approvalTools: request.approvalTools,
+				compaction,
 			},
 			updatedAt: Date.now(),
 		});
@@ -173,6 +206,6 @@ export const run = internalMutation({
 			session: session.sessionName,
 		});
 
-		return { sessionId: request.sessionId, maxSteps, maxFollowUps, hasResultSchema };
+		return { sessionId: request.sessionId, model, maxSteps, maxFollowUps, hasResultSchema, compaction };
 	},
 });

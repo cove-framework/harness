@@ -7,7 +7,9 @@ import { v } from "convex/values";
 import { mutation } from "../_generated/server";
 import {
 	type AdmitResult,
+	admitCompact,
 	admitPrompt,
+	admitSkill,
 	admitWorkflow,
 	cancelActiveRequests,
 	findSessionId,
@@ -58,6 +60,54 @@ export const submitWorkflow = mutation({
 			instanceId: args.instanceId ?? `workflow:${args.name}`,
 			harnessName: "default",
 			sessionName: args.sessionName ?? "default",
+		}),
+});
+
+/** Activate a catalog skill as a kind:"skill" run (G2.5): resolve the skill body → admit it as the prompt. */
+export const submitSkill = mutation({
+	args: {
+		skill: v.string(),
+		args: v.optional(v.any()),
+		model: v.optional(v.string()),
+		instanceId: v.optional(v.string()),
+		harnessName: v.optional(v.string()),
+		sessionName: v.optional(v.string()),
+	},
+	handler: async (ctx, a): Promise<AdmitResult> => {
+		const row = await ctx.db
+			.query("skills")
+			.withIndex("by_slug", (q) => q.eq("slug", a.skill))
+			.unique();
+		if (!row || !row.isActive) {
+			throw new Error(`[cove] skill "${a.skill}" not found in catalog.`);
+		}
+		const instructions =
+			a.args && Object.keys(a.args).length > 0
+				? `${row.instructions}\n\nArguments: ${JSON.stringify(a.args)}`
+				: row.instructions;
+		return admitSkill(ctx, {
+			skill: a.skill,
+			instructions,
+			model: a.model,
+			instanceId: a.instanceId ?? "default",
+			harnessName: a.harnessName ?? "default",
+			sessionName: a.sessionName ?? "default",
+		});
+	},
+});
+
+/** Compact a session's history as a kind:"compact" run (G2.5). */
+export const submitCompact = mutation({
+	args: {
+		instanceId: v.optional(v.string()),
+		harnessName: v.optional(v.string()),
+		sessionName: v.optional(v.string()),
+	},
+	handler: async (ctx, a): Promise<AdmitResult> =>
+		admitCompact(ctx, {
+			instanceId: a.instanceId ?? "default",
+			harnessName: a.harnessName ?? "default",
+			sessionName: a.sessionName ?? "default",
 		}),
 });
 

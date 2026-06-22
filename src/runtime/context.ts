@@ -83,12 +83,23 @@ export interface PromptSubmission extends SessionRef {
  * The seam the facade drives. The native implementation (P9) wraps a ConvexReactClient/ConvexHttpClient:
  * submitPrompt → api.invoke.submitPrompt; awaitTerminal → subscribe/poll api.requests.get to terminal.
  */
+/** A skill activation submission (G2.5): the catalog skill name + optional args/model, addressed to a session. */
+export interface SkillSubmission extends SessionRef {
+	skill: string;
+	args?: Record<string, unknown>;
+	model?: string;
+}
+
 export interface CoveTransport {
 	submitPrompt(submission: PromptSubmission, signal: AbortSignal): Promise<{ requestId: string }>;
 	awaitTerminal(requestId: string, signal: AbortSignal): Promise<RequestSnapshot>;
 	stopActive(ref: SessionRef): Promise<void>;
 	sessionExists(ref: SessionRef): Promise<boolean>;
 	deleteSession(ref: SessionRef): Promise<void>;
+	/** Activate a catalog skill as a prompt (G2.5). Resolves a kind:"skill" run; unknown skill → typed error. */
+	submitSkill(submission: SkillSubmission, signal: AbortSignal): Promise<{ requestId: string }>;
+	/** Compact the session's history (G2.5). Resolves a kind:"compact" run that appends a CompactionEntry. */
+	submitCompact(ref: SessionRef, signal: AbortSignal): Promise<{ requestId: string }>;
 }
 
 export interface CoveContextInit<TPayload, TEnv> {
@@ -196,8 +207,23 @@ function makeSession(
 		name: ref.sessionName,
 		// Overload-compatible: result option narrows the resolved type at the call site.
 		prompt: runPrompt as CoveSession["prompt"],
-		skill(_skill: SkillReference | string, options?: SkillOptions): CallHandle<PromptResponse> {
-			return deferredCall(options?.signal, "session.skill() lands with the skills catalog (P10)");
+		skill(skill: SkillReference | string, options?: SkillOptions): CallHandle<PromptResponse> {
+			const name = typeof skill === "string" ? skill : skill.name;
+			const model = options?.model ?? defaultModel;
+			return createCallHandle(options?.signal, async (signal) => {
+				const { requestId } = await transport.submitSkill(
+					{ ...ref, skill: name, args: options?.args, model },
+					signal,
+				);
+				let snap: RequestSnapshot;
+				try {
+					snap = await transport.awaitTerminal(requestId, signal);
+				} catch (err) {
+					if (signal.aborted) await transport.stopActive(ref).catch(() => {});
+					throw err;
+				}
+				return mapSnapshot(snap, model ?? "", undefined, signal) as PromptResponse;
+			});
 		},
 		task(_text: string, options?: TaskOptions): CallHandle<PromptResponse> {
 			return deferredCall(options?.signal, "session.task() lands with subagent delegation (P6)");
@@ -207,7 +233,9 @@ function makeSession(
 		},
 		fs: deferredFs(),
 		async compact(): Promise<void> {
-			throw new CoveError("[cove] session.compact() lands with compaction (P12).", "not_implemented");
+			const signal = new AbortController().signal;
+			const { requestId } = await transport.submitCompact(ref, signal);
+			await transport.awaitTerminal(requestId, signal);
 		},
 		async delete(): Promise<void> {
 			await transport.deleteSession(ref);

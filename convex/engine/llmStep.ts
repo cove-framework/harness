@@ -43,9 +43,24 @@ export const run = internalAction({
 			});
 		};
 
+		// Frozen compaction settings (G2.5) → the decode's threshold gate. Disabled (false) / contextWindow 0
+		// ⇒ undefined ⇒ shouldCompact stays false.
+		const compaction =
+			plan.compaction && plan.compaction.enabled
+				? {
+						settings: {
+							enabled: true,
+							reserveTokens: plan.compaction.reserveTokens,
+							keepRecentTokens: plan.compaction.keepRecentTokens,
+						},
+						contextWindow: plan.compaction.contextWindow,
+					}
+				: undefined;
+
 		const deps: DecodeDeps = {
 			hitlToolNames,
 			emit,
+			compaction,
 			loadStep: async () => {
 				const row = await ctx.runQuery(internal.engine.steps.byRequestStep, { requestId, stepNumber });
 				if (!row) return null;
@@ -54,6 +69,7 @@ export const run = internalAction({
 					finishReason: row.finishReason,
 					text: row.text,
 					toolCalls: row.toolCalls,
+					usage: row.usage, // G2.5: the replay path computes shouldCompact from the persisted usage
 				};
 			},
 			insertStreaming: async () => {

@@ -25,6 +25,10 @@ export interface CoveApiRefs {
 	getRequest: unknown;
 	sessionExists: unknown;
 	deleteSession: unknown;
+	/** api.invoke.submit.submitSkill (G2.5). */
+	submitSkill: unknown;
+	/** api.invoke.submit.submitCompact (G2.5). */
+	submitCompact: unknown;
 }
 
 export interface CreateCoveTransportOptions {
@@ -52,6 +56,25 @@ export function createCoveTransport(
 				harnessName: submission.harnessName,
 				sessionName: submission.sessionName,
 				resultSchema: submission.resultSchema,
+			})) as { requestId: string };
+			return { requestId: r.requestId };
+		},
+		async submitSkill(submission) {
+			const r = (await client.mutation(refs.submitSkill, {
+				skill: submission.skill,
+				args: submission.args,
+				model: submission.model,
+				instanceId: submission.instanceId,
+				harnessName: submission.harnessName,
+				sessionName: submission.sessionName,
+			})) as { requestId: string };
+			return { requestId: r.requestId };
+		},
+		async submitCompact(ref) {
+			const r = (await client.mutation(refs.submitCompact, {
+				instanceId: ref.instanceId,
+				harnessName: ref.harnessName,
+				sessionName: ref.sessionName,
 			})) as { requestId: string };
 			return { requestId: r.requestId };
 		},

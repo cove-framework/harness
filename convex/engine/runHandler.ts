@@ -55,6 +55,17 @@ export const agentRun = workflow.define({
 							error: input.error,
 						});
 					},
+					compact: async (stepNumber) => {
+						const c = typeof plan.compaction === "object" ? plan.compaction : undefined;
+						await step.runAction(internal.engine.compact.compact, {
+							sessionId: plan.sessionId,
+							requestId,
+							stepNumber,
+							model: plan.model,
+							keepRecentTokens: c?.keepRecentTokens,
+							reserveTokens: c?.reserveTokens,
+						});
+					},
 					resolveApprovals: async (stepNumber, gatedCalls) => {
 						await step.runMutation(internal.engine.approvals.park, {
 							requestId,

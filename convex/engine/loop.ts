@@ -52,6 +52,8 @@ export interface RunLoopDeps {
 	finalize(input: FinalizeInput): Promise<void>;
 	/** HITL gate: park the approval-gated calls and await/apply their decisions before dispatch (doc 08 §4.4). */
 	resolveApprovals?(stepNumber: number, gatedCalls: ToolCallRecord[]): Promise<void>;
+	/** Threshold compaction (G2.5): a journaled step.runAction(compact). Called when decision.shouldCompact. */
+	compact?(stepNumber: number): Promise<void>;
 }
 
 /**
@@ -99,6 +101,12 @@ export async function runAgentLoop(plan: LoopPlan, deps: RunLoopDeps): Promise<v
 			const settled = await settleResultRun(deps, decision.text);
 			if (settled) return;
 		}
+
+		// Threshold compaction (G2.5): the step's persisted usage crossed the window − reserve. Compact (a
+		// journaled step) BEFORE the next decode, which then reads the compacted [summary + tail] history. No
+		// retry (threshold mode). The compact step is replay-deterministic, so a mid-loop replay re-yields the
+		// journaled summary with no second summarization call (doc 08 §4.1).
+		if (decision.shouldCompact && deps.compact) await deps.compact(stepNumber);
 
 		stepNumber++;
 	}

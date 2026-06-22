@@ -3,10 +3,31 @@ import { describe, expect, it } from "vitest";
 import type { AssistantMessage } from "../../../src/runtime/messages.ts";
 import {
 	isCompletedAssistantResponse,
+	isContextOverflow,
 	isRetryableErrorMessage,
 	isRetryableModelError,
 	isRetryableThrown,
 } from "../retry.ts";
+
+describe("isContextOverflow (G2.5 seam)", () => {
+	it("matches provider context-overflow signatures", () => {
+		for (const m of [
+			"This model's maximum context length is 200000 tokens",
+			"prompt is too long: 250000 tokens > 200000 maximum",
+			"input is too long for the requested model",
+			"too many tokens in the request",
+			"Please reduce the length of the messages",
+		]) {
+			expect(isContextOverflow(m)).toBe(true);
+		}
+	});
+	it("does NOT match a transient/other error (distinct from isRetryableModelError)", () => {
+		expect(isContextOverflow("rate limit exceeded (429)")).toBe(false);
+		expect(isContextOverflow("service unavailable")).toBe(false);
+		expect(isContextOverflow(new Error("invalid api key"))).toBe(false);
+		expect(isContextOverflow(undefined)).toBe(false);
+	});
+});
 
 describe("isRetryableErrorMessage", () => {
 	it("matches transient provider-failure families", () => {

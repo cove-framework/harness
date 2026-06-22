@@ -19,6 +19,8 @@ const REFS = {
 	stopActive: "stopActive",
 	sessionExists: "sessionExists",
 	deleteSession: "deleteSession",
+	submitSkill: "submitSkill",
+	submitCompact: "submitCompact",
 };
 
 function fakeClient(over?: { query?: (ref: unknown, args: Record<string, unknown>) => unknown }) {

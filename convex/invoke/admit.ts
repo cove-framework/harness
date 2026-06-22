@@ -141,6 +141,75 @@ export async function admitPrompt(ctx: MutationCtx, args: AdmitPromptArgs): Prom
 	return { sessionId, requestId, submissionId, workflowId };
 }
 
+export interface AdmitSkillArgs extends SessionRef {
+	/** The catalog skill name (target) + its resolved instructions body (submitted as the prompt). */
+	skill: string;
+	instructions: string;
+	model?: string;
+}
+
+/** Admit a skill activation as a kind:"skill" run: the resolved skill body is the prompt, target = the name (G2.5). */
+export async function admitSkill(ctx: MutationCtx, args: AdmitSkillArgs): Promise<AdmitResult> {
+	assertPublicSessionName(args.sessionName);
+	const sessionId = await getOrCreateSessionId(ctx, args);
+	await cancelActiveRequests(ctx, sessionId, "superseded");
+
+	const now = Date.now();
+	const submissionId = crypto.randomUUID();
+	const requestId = await ctx.db.insert("agentRequests", {
+		sessionId,
+		instanceId: args.instanceId,
+		submissionId,
+		kind: "skill",
+		input: args.instructions,
+		target: args.skill,
+		status: "pending",
+		model: args.model ?? "cove-test/mock",
+		createdAt: now,
+		updatedAt: now,
+	});
+
+	const userMessage: AgentMessage = { role: "user", content: args.instructions, timestamp: now };
+	await appendCanonicalEntry(ctx, sessionId, `u-${requestId}`, userMessage, now);
+
+	const workflowId = await workflow.start(ctx, internal.engine.runHandler.agentRun, { requestId });
+	await ctx.db.patch(requestId, { convexWorkflowId: workflowId });
+	return { sessionId, requestId, submissionId, workflowId };
+}
+
+/**
+ * Admit a compaction as a kind:"compact" run (G2.5): create the request, schedule the compact action (which
+ * appends the CompactionEntry + finalizes this request so session.compact()'s awaitTerminal resolves). No
+ * workflow — compaction is a one-shot maintenance op, not the agent loop.
+ */
+export async function admitCompact(ctx: MutationCtx, args: SessionRef): Promise<AdmitResult> {
+	assertPublicSessionName(args.sessionName);
+	const sessionId = await getOrCreateSessionId(ctx, args);
+	const session = await ctx.db.get(sessionId);
+
+	const now = Date.now();
+	const submissionId = crypto.randomUUID();
+	const requestId = await ctx.db.insert("agentRequests", {
+		sessionId,
+		instanceId: args.instanceId,
+		submissionId,
+		kind: "compact",
+		input: null,
+		status: "running",
+		model: session?.model ?? "cove-test/mock",
+		createdAt: now,
+		updatedAt: now,
+	});
+
+	await ctx.scheduler.runAfter(0, internal.engine.compact.compact, {
+		sessionId,
+		requestId,
+		model: session?.model,
+		finalizeOnComplete: true,
+	});
+	return { sessionId, requestId, submissionId, workflowId: undefined as unknown as WorkflowId };
+}
+
 export interface AdmitWorkflowArgs extends SessionRef {
 	/** Registered workflow name (the /workflows/:name segment / target). */
 	name: string;

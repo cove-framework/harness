@@ -10,7 +10,7 @@ import type { LanguageModelV2 } from "@ai-sdk/provider";
 import { generateText } from "ai";
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
-import { action } from "../_generated/server";
+import { internalAction } from "../_generated/server";
 import {
 	computeFileLists,
 	DEFAULT_COMPACTION_SETTINGS,
@@ -20,15 +20,22 @@ import {
 	SUMMARIZATION_PROMPT,
 	SUMMARIZATION_SYSTEM_PROMPT,
 } from "../../src/runtime/compaction.ts";
+import type { CoveEventInput } from "../../src/runtime/types.ts";
 import { SessionHistory } from "../../src/runtime/session-history.ts";
+import { emitFromAction } from "../events/emit.ts";
 import { resolveModel } from "../providers/gateway.ts";
 
-export const compact = action({
+export const compact = internalAction({
 	args: {
 		sessionId: v.id("sessions"),
 		model: v.optional(v.string()),
 		keepRecentTokens: v.optional(v.number()),
 		reserveTokens: v.optional(v.number()),
+		// G2.5: the loop's compact step passes requestId/stepNumber for event context. session.compact()
+		// passes finalizeOnComplete so the standalone kind:"compact" request terminalizes for awaitTerminal.
+		requestId: v.optional(v.id("agentRequests")),
+		stepNumber: v.optional(v.number()),
+		finalizeOnComplete: v.optional(v.boolean()),
 	},
 	handler: async (
 		ctx,
@@ -36,6 +43,45 @@ export const compact = action({
 	): Promise<{ compacted: boolean; firstKeptEntryId?: string; tokensBefore?: number; reason?: string }> => {
 		const handle = resolveModel(args.model ?? "anthropic/claude-haiku-4-5");
 		if (!handle) throw new Error("[cove] no model resolved for compaction");
+
+		// Event-stream context (G2.5/G2.1): emit compaction_start/compaction so the OTel observer + UI see it.
+		const emitCtx = await ctx.runQuery(internal.engine.requests.getEmitContext, {
+			sessionId: args.sessionId,
+			requestId: args.requestId,
+		});
+		const decorate = (event: CoveEventInput): CoveEventInput =>
+			({
+				...event,
+				...(emitCtx.instanceId ? { instanceId: emitCtx.instanceId } : {}),
+				...(emitCtx.submissionId ? { submissionId: emitCtx.submissionId } : {}),
+				...(emitCtx.sessionName ? { session: emitCtx.sessionName } : {}),
+			}) as CoveEventInput;
+		const finalize = async (
+			out: { compacted: boolean; firstKeptEntryId?: string; tokensBefore?: number; reason?: string },
+			started: boolean,
+			messagesBefore: number,
+			messagesAfter: number,
+			startedAt: number,
+		) => {
+			if (started && emitCtx.instanceId) {
+				await emitFromAction(ctx, decorate({
+					type: "compaction",
+					messagesBefore,
+					messagesAfter,
+					durationMs: Date.now() - startedAt,
+					isError: false,
+				}));
+			}
+			// session.compact() (standalone kind:"compact" request) terminalizes so its CallHandle resolves.
+			if (args.finalizeOnComplete && args.requestId) {
+				await ctx.runMutation(internal.engine.finalize.run, {
+					requestId: args.requestId,
+					status: "completed",
+					finalText: out.compacted ? "compacted" : (out.reason ?? "noop"),
+				});
+			}
+			return out;
+		};
 
 		const data = await ctx.runQuery(internal.sessions.store.load, { sessionId: args.sessionId });
 		const history = SessionHistory.fromData(data);
@@ -48,10 +94,19 @@ export const compact = action({
 			keepRecentTokens: args.keepRecentTokens ?? DEFAULT_COMPACTION_SETTINGS.keepRecentTokens,
 		};
 		const prep = prepareCompaction(messages, settings);
-		if (!prep) return { compacted: false, reason: "nothing older than the retained tail" };
+		if (!prep) return finalize({ compacted: false, reason: "nothing older than the retained tail" }, false, messages.length, messages.length, 0);
 
 		const firstKeptEntryId = contextEntries[prep.firstKeptIndex]?.entry?.id;
-		if (!firstKeptEntryId) return { compacted: false, reason: "cut point has no persisted entry" };
+		if (!firstKeptEntryId) return finalize({ compacted: false, reason: "cut point has no persisted entry" }, false, messages.length, messages.length, 0);
+
+		const startedAt = Date.now();
+		if (emitCtx.instanceId) {
+			await emitFromAction(ctx, decorate({
+				type: "compaction_start",
+				reason: args.stepNumber === undefined ? "manual" : "threshold",
+				estimatedTokens: prep.tokensBefore,
+			}));
+		}
 
 		const conversationText = serializeConversation(prep.messagesToSummarize);
 		const result = await generateText({
@@ -70,6 +125,12 @@ export const compact = action({
 			tokensBefore: prep.tokensBefore,
 			details: { readFiles, modifiedFiles },
 		});
-		return { compacted: true, firstKeptEntryId, tokensBefore: prep.tokensBefore };
+		return finalize(
+			{ compacted: true, firstKeptEntryId, tokensBefore: prep.tokensBefore },
+			true,
+			messages.length,
+			messages.length - prep.messagesToSummarize.length + 1,
+			startedAt,
+		);
 	},
 });
