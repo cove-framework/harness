@@ -22,6 +22,12 @@ export interface BuildToolsSources {
 	userTools?: Map<string, ToolDefinition>;
 	/** The per-call finish/give_up bundle, when the run declares a result schema. */
 	resultBundle?: ResultToolBundle<unknown>;
+	/**
+	 * Per-beat MCP resolver (G2.2). Supplied ONLY by the "use node" dispatchTools action (it opens a
+	 * network client via the connection pool), so buildExecutableTools stays pure for llmStep/model-view.
+	 * Absent → an MCP descriptor degrades to an error tool-result.
+	 */
+	mcpResolve?: (descriptor: FrozenToolDescriptor) => EngineTool;
 }
 
 /**
@@ -69,8 +75,13 @@ function buildExecutable(d: FrozenToolDescriptor, sources: BuildToolsSources): E
 				if (!def) return errorTool(d, `tool "${d.name}" could not be resolved from the registry.`);
 				return userToolToEngineTool(def);
 			}
-			case "mcp":
-				return errorTool(d, `MCP tool "${d.name}" is not available yet (P10).`);
+			case "mcp": {
+				// Re-resolve a network MCP client from the frozen descriptor, fresh every beat (doc 08 §4.5).
+				// The resolver itself never throws — it returns an EngineTool that degrades (connect/drift) to
+				// an error tool-result at execute time. Absent resolver (e.g. llmStep model-view) → degrade.
+				if (!sources.mcpResolve) return errorTool(d, `MCP tool "${d.name}" is unavailable (no resolver).`);
+				return sources.mcpResolve(d);
+			}
 			case "task":
 				// task is intercepted by dispatchTools (it spawns a child workflow); never executed here.
 				return errorTool(d, `task tool "${d.name}" is handled by the loop, not the dispatcher.`);

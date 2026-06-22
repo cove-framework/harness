@@ -5,7 +5,7 @@
 
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { type AdmitResult, admitPrompt } from "./invoke/admit.ts";
+import { type AdmitResult, admitPrompt, admitWorkflow } from "./invoke/admit.ts";
 
 export const startPrompt = mutation({
 	args: {
@@ -31,6 +31,23 @@ export const startPrompt = mutation({
 		}),
 });
 
+/** Drive a workflow invoke (G2.4) — the distinct kind:"workflow" run path, without going through HTTP. */
+export const startWorkflow = mutation({
+	args: {
+		name: v.string(),
+		input: v.optional(v.any()),
+		instanceId: v.optional(v.string()),
+	},
+	handler: async (ctx, args): Promise<AdmitResult> =>
+		admitWorkflow(ctx, {
+			name: args.name,
+			input: args.input,
+			instanceId: args.instanceId ?? `workflow:${args.name}`,
+			harnessName: "default",
+			sessionName: "default",
+		}),
+});
+
 export const getRequest = query({
 	args: { requestId: v.id("agentRequests") },
 	handler: async (ctx, { requestId }) => {
@@ -41,6 +58,8 @@ export const getRequest = query({
 			.withIndex("by_request_and_step", (q) => q.eq("requestId", requestId))
 			.collect();
 		return {
+			kind: req.kind,
+			target: req.target,
 			status: req.status,
 			finalText: req.finalText,
 			result: req.result,

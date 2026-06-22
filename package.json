@@ -4,9 +4,27 @@
   "version": "0.0.0",
   "private": true,
   "description": "Cove — a Convex-native agent harness (rewrite of the flue framework)",
+  "exports": {
+    "./runtime": "./src/runtime/index.ts",
+    "./sdk": "./src/sdk/index.ts",
+    "./react": "./src/react/index.ts",
+    "./cli": "./src/cli/index.ts"
+  },
+  "bin": {
+    "cove": "./bin/cove.mjs"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
   "scripts": {
     "convex": "convex dev",
     "deploy": "convex deploy",
+    "cove": "tsx bin/cove.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
@@ -18,19 +36,30 @@
     "@ai-sdk/openai": "^2.0.0",
     "@convex-dev/workflow": "^0.3.12",
     "@convex-dev/workpool": "^0.4.6",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@opentelemetry/api": "^1.9.0",
     "@upstash/box": "^0.4.4",
     "@valibot/to-json-schema": "^1.0.0",
     "ai": "^5.0.0",
     "convex": "^1.39.0",
     "convex-helpers": "^0.1.118",
+    "jose": "^6.2.3",
     "js-yaml": "^4.2.0",
     "valibot": "^1.0.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@ai-sdk/provider-utils": "^3.0.0",
+    "@edge-runtime/vm": "^5.0.0",
+    "@testing-library/react": "^16.3.2",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^25",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "convex-test": "^0.0.53",
+    "happy-dom": "^20.10.6",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
     "tsx": "^4.21.0",
     "typescript": "^6",
     "vitest": "^4.1.5"

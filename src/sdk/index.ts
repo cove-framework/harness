@@ -25,6 +25,10 @@ export interface CoveApiRefs {
 	getRequest: unknown;
 	sessionExists: unknown;
 	deleteSession: unknown;
+	/** api.invoke.submit.submitSkill (G2.5). */
+	submitSkill: unknown;
+	/** api.invoke.submit.submitCompact (G2.5). */
+	submitCompact: unknown;
 }
 
 export interface CreateCoveTransportOptions {
@@ -52,6 +56,25 @@ export function createCoveTransport(
 				harnessName: submission.harnessName,
 				sessionName: submission.sessionName,
 				resultSchema: submission.resultSchema,
+			})) as { requestId: string };
+			return { requestId: r.requestId };
+		},
+		async submitSkill(submission) {
+			const r = (await client.mutation(refs.submitSkill, {
+				skill: submission.skill,
+				args: submission.args,
+				model: submission.model,
+				instanceId: submission.instanceId,
+				harnessName: submission.harnessName,
+				sessionName: submission.sessionName,
+			})) as { requestId: string };
+			return { requestId: r.requestId };
+		},
+		async submitCompact(ref) {
+			const r = (await client.mutation(refs.submitCompact, {
+				instanceId: ref.instanceId,
+				harnessName: ref.harnessName,
+				sessionName: ref.sessionName,
 			})) as { requestId: string };
 			return { requestId: r.requestId };
 		},
@@ -113,6 +136,36 @@ export function createCoveClient(
 		context: (init) => createCoveContext(transport, init),
 	};
 }
+
+// ─── Reactive consumer client (createCoveReactiveClient) ─────────────────────
+// Distinct from the runtime-facade transport above: this is the Convex-reactive consumer
+// surface (agents.send/prompt, runs.get/events) ported from @flue/sdk. No SSE / Durable Streams.
+export { createCoveReactiveClient } from "./client.ts";
+export {
+	createCoveEventStream,
+	type CreateCoveEventStreamOptions,
+} from "./event-stream.ts";
+export {
+	CoveApiError,
+	type AgentPromptImage,
+	type AgentPromptOptions,
+	type AgentPromptResult,
+	type AgentSendResult,
+	type AttachedAgentEvent,
+	type CoveConvexClient,
+	type CoveEvent,
+	type CoveEventStream,
+	type CoveReactiveApiRefs,
+	type CoveReactiveClient,
+	type CoveStreamOptions,
+	type CreateCoveReactiveClientOptions,
+	type PromptResponse,
+	type PromptUsage,
+	type RunRecord,
+	type RunStatus,
+	type WorkflowInvokeOptions,
+} from "./types.ts";
+export { IMAGE_DATA_OMITTED } from "./types.ts";
 
 function delay(ms: number, signal: AbortSignal): Promise<void> {
 	return new Promise((resolve, reject) => {

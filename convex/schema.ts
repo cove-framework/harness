@@ -165,11 +165,15 @@ export default defineSchema({
     instanceId: v.string(),
     submissionId: v.string(), // correlates events; returned to the caller
 
+    // NOTE (D18): the design describes a `runs.kind: agent|workflow` discriminator; the shipped code uses
+    // this agentRequests.kind. G2.4 adds "workflow" here (no parallel runs table) so a workflow invoke is a
+    // distinct run kind from an agent prompt.
     kind: v.union(
       v.literal("prompt"),
       v.literal("skill"),
       v.literal("task"),
       v.literal("compact"),
+      v.literal("workflow"),
     ),
     input: v.union(v.string(), v.null()),
     // Image attachments on the user turn (hashes into imageChunks; never raw
@@ -181,6 +185,21 @@ export default defineSchema({
     resultSchema: v.optional(v.any()),
     // Tool names requiring human approval (HITL; frozen onto the plan at setup, doc 08 §4.4).
     approvalTools: v.optional(v.array(v.string())),
+    // Declared MCP servers (G2.2). Discovered + frozen as kind:"mcp" plan tools at setup.
+    mcpServers: v.optional(v.array(v.any())),
+    // Channel reply-address (G2.3): captured at admission for an inbound webhook run so the outbound reply
+    // can address the channel after the run terminalizes. Absent for native/HTTP runs. No separate table (D14).
+    replyContext: v.optional(
+      v.object({
+        provider: v.string(),
+        target: v.string(),
+        threadId: v.optional(v.string()),
+        responseUrl: v.optional(v.string()),
+        addressing: v.optional(v.any()),
+      }),
+    ),
+    // Set once the outbound reply has been posted (the replay double-post guard).
+    repliedAt: v.optional(v.number()),
     // The skill ref / subagent name for kind="skill"/"task".
     target: v.optional(v.string()),
     // Nested task-delegation depth (0 = top-level); child = parent+1, bounded by MAX_TASK_DEPTH (doc 04).

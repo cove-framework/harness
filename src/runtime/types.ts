@@ -10,6 +10,7 @@ import type {
 	ThinkingLevel,
 } from "./messages.ts";
 import type { ToolDefinition } from "./tool-types.ts";
+import type { McpServerOptions } from "./mcp-types.ts";
 
 export type { ToolArgs, ToolDefinition, ToolParameters } from "./tool-types.ts";
 export type { ThinkingLevel } from "./messages.ts";
@@ -298,6 +299,8 @@ export interface AgentProfile {
 	skills?: Skill[];
 	/** Custom model-callable tools available to sessions initialized from this profile. */
 	tools?: ToolDefinition[];
+	/** Remote MCP servers whose tools are discovered + frozen as model-callable tools (G2.2). */
+	mcpServers?: McpServerOptions[];
 	/** Named profiles available for delegated `session.task()` operations. */
 	subagents?: AgentProfile[];
 	/** Default reasoning effort. Individual operations may override this value. */
@@ -328,6 +331,8 @@ export interface AgentRuntimeConfig {
 	skills?: Skill[];
 	/** Additional custom model-callable tools available to initialized sessions. */
 	tools?: ToolDefinition[];
+	/** Additional remote MCP servers whose tools are discovered + frozen as model-callable tools (G2.2). */
+	mcpServers?: McpServerOptions[];
 	/** Additional named profiles available for delegated `session.task()` operations. */
 	subagents?: AgentProfile[];
 	/** Default reasoning effort. Individual operations may override this value. */
@@ -868,12 +873,12 @@ type CoveEventVariant =
 	| {
 			type: "operation_start";
 			operationId: string;
-			operationKind: "prompt" | "skill" | "task" | "shell" | "compact";
+			operationKind: "prompt" | "skill" | "task" | "shell" | "compact" | "workflow";
 	  }
 	| {
 			type: "operation";
 			operationId: string;
-			operationKind: "prompt" | "skill" | "task" | "shell" | "compact";
+			operationKind: "prompt" | "skill" | "task" | "shell" | "compact" | "workflow";
 			durationMs: number;
 			isError: boolean;
 			error?: unknown;

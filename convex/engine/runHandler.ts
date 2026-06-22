@@ -14,7 +14,15 @@ import { workflow } from "../workflow.ts";
 export const agentRun = workflow.define({
 	args: { requestId: v.id("agentRequests") },
 	handler: async (step, { requestId }) => {
-		const plan = await step.runMutation(internal.engine.setup.run, { requestId });
+		// MCP discovery hop (G2.2): when the request declares mcpServers, a "use node" action discovers +
+		// freezes their tools (a journaled checkpoint) BEFORE the freeze mutation, so setup stays a
+		// deterministic mutation. Gated by a cheap query so non-MCP runs skip the node cold start.
+		const mcpServers = await step.runQuery(internal.engine.requests.getMcpServers, { requestId });
+		const discoveredMcp =
+			mcpServers.length > 0
+				? await step.runAction(internal.mcp.discover.run, { requestId })
+				: [];
+		const plan = await step.runMutation(internal.engine.setup.run, { requestId, discoveredMcp });
 
 		try {
 			await runAgentLoop(
@@ -47,6 +55,17 @@ export const agentRun = workflow.define({
 							error: input.error,
 						});
 					},
+					compact: async (stepNumber) => {
+						const c = typeof plan.compaction === "object" ? plan.compaction : undefined;
+						await step.runAction(internal.engine.compact.compact, {
+							sessionId: plan.sessionId,
+							requestId,
+							stepNumber,
+							model: plan.model,
+							keepRecentTokens: c?.keepRecentTokens,
+							reserveTokens: c?.reserveTokens,
+						});
+					},
 					resolveApprovals: async (stepNumber, gatedCalls) => {
 						await step.runMutation(internal.engine.approvals.park, {
 							requestId,
@@ -76,9 +95,13 @@ export const agentRun = workflow.define({
 			);
 		} catch (error) {
 			// A result-schema run that gave up / exhausted follow-ups already finalized the request as
-			// failed; swallow the signal so the workflow doesn't enter a retry loop.
-			if (error instanceof ResultUnavailableError) return;
-			throw error;
+			// failed; swallow the signal (don't retry) but still fall through to post the channel reply.
+			if (!(error instanceof ResultUnavailableError)) throw error;
 		}
+
+		// Post-finalize channel reply (G2.3): a journaled, replay-idempotent step (the repliedAt stamp makes
+		// a re-dispatch a no-op). No-op for native/HTTP runs (no replyContext). This is the ONLY engine touch
+		// for channels and changes no loop semantics. Non-terminal (re-thrown) errors above never reach here.
+		await step.runAction(internal.channels.reply.dispatch, { requestId });
 	},
 });

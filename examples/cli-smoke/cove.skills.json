@@ -1,0 +1,24 @@
+{
+  "skills": [
+    {
+      "reference": {
+        "__coveSkillReference": true,
+        "id": "skill:review-pr:8894c0aa7981d316",
+        "name": "review-pr",
+        "description": "Review a pull request for correctness, security, and style; summarize findings concisely."
+      },
+      "directory": {
+        "id": "skill:review-pr:8894c0aa7981d316",
+        "name": "review-pr",
+        "description": "Review a pull request for correctness, security, and style; summarize findings concisely.",
+        "files": {
+          "SKILL.md": {
+            "encoding": "base64",
+            "kind": "text",
+            "content": "LS0tCm5hbWU6IHJldmlldy1wcgpkZXNjcmlwdGlvbjogUmV2aWV3IGEgcHVsbCByZXF1ZXN0IGZvciBjb3JyZWN0bmVzcywgc2VjdXJpdHksIGFuZCBzdHlsZTsgc3VtbWFyaXplIGZpbmRpbmdzIGNvbmNpc2VseS4KLS0tCgojIFJldmlldyBQUgoKSW5zcGVjdCB0aGUgZGlmZiwgZmxhZyBjb3JyZWN0bmVzcyBidWdzIGFuZCBzZWN1cml0eSBpc3N1ZXMgZmlyc3QsIHRoZW4gc3R5bGUuClN1bW1hcml6ZSBmaW5kaW5ncyBhcyBhIHNob3J0LCBwcmlvcml0aXplZCBsaXN0Lgo="
+          }
+        }
+      }
+    }
+  ]
+}
