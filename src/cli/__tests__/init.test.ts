@@ -74,7 +74,7 @@ describe("cove init", () => {
 			scripts: Record<string, string>;
 		};
 		expect(pkg.name).toBe(path.basename(dir).toLowerCase()); // npm names must be lowercase
-		expect(pkg.dependencies.cove).toMatch(/^\^/); // self-dep on the published CLI + client surfaces
+		expect(pkg.dependencies["@cove-framework/cove"]).toMatch(/^\^/); // self-dep on the published CLI + client surfaces
 		expect(pkg.dependencies.convex).toBeDefined();
 		expect(pkg.dependencies.ai).toBeDefined();
 		// The vendored runtime imports js-yaml, which has no bundled types.
@@ -85,7 +85,7 @@ describe("cove init", () => {
 
 	it("config dogfoods the published cove/cli export", async () => {
 		await initProject({ dir });
-		expect(read("cove.config.ts")).toContain('from "cove/cli"');
+		expect(read("cove.config.ts")).toContain('from "@cove-framework/cove/cli"');
 		expect(read("cove.config.ts")).toContain("defineCoveConfig");
 	});
 

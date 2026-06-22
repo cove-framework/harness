@@ -3,8 +3,8 @@
 // The Convex backend cannot be an ordinary npm import — Convex deploys functions from the *consumer's own*
 // convex/ dir. So `cove init` VENDORS the backend the user owns: it copies this package's own `convex/` +
 // `src/runtime/` into the target, then writes the starter scaffolding (config, an example agent registry, env
-// template, tsconfig, README, package.json). The published client surfaces (cove/runtime, cove/sdk,
-// cove/react) + the `cove` CLI come from the npm package the scaffold depends on. See README "Install".
+// template, tsconfig, README, package.json). The published client surfaces (@cove-framework/cove/runtime,
+// /sdk, /react) + the `cove` CLI come from the npm package the scaffold depends on. See README "Install".
 //
 // The vendored backend's relative imports (`../src/runtime/...` from convex/**) are preserved by copying
 // convex/ + src/runtime/ with their layout intact. The demo `_cove/*` resolvers are NOT copied — they are
@@ -64,7 +64,7 @@ function findPackageRoot(): string {
 		if (fs.existsSync(pkgPath)) {
 			try {
 				const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8")) as { name?: string };
-				if (pkg.name === "cove") return dir;
+				if (pkg.name === "@cove-framework/cove") return dir;
 			} catch {
 				// not the file we want — keep walking
 			}
@@ -172,7 +172,7 @@ function buildProjectPackageJson(
 	const dev = pkg.devDependencies ?? {};
 	// The vendored backend imports these directly; declare them so resolution doesn't rely on cove's hoisting.
 	const dependencies: Record<string, string> = {
-		cove: `^${pkg.version}`,
+		"@cove-framework/cove": `^${pkg.version}`,
 		...dep,
 	};
 	const pick = (name: string): Record<string, string> => (dev[name] ? { [name]: dev[name] } : {});
@@ -198,7 +198,7 @@ function buildProjectPackageJson(
 	};
 }
 
-const COVE_CONFIG_TS = `import { defineCoveConfig } from "cove/cli";
+const COVE_CONFIG_TS = `import { defineCoveConfig } from "@cove-framework/cove/cli";
 
 // Cove project configuration. \`cove dev\`/\`build\`/\`deploy\` read this.
 export default defineCoveConfig({
@@ -258,7 +258,7 @@ const ENV_EXAMPLE = `# Provider keys + auth secrets belong in the Convex deploym
 function readme(projectName: string): string {
 	return `# ${projectName}
 
-A [Cove](https://github.com/cove-framework/harness) agent project — a Convex-native agent harness.
+A [Cove](https://github.com/cove-framework/cove) agent project — a Convex-native agent harness.
 
 ## Layout
 
@@ -297,8 +297,8 @@ curl -X POST "$CONVEX_SITE_URL/agents/assistant" \\
 Talk to your deployed agent from React with the published client surfaces:
 
 \`\`\`ts
-import { CoveProvider, useAgentPrompt } from "cove/react";
-import { createCoveReactiveClient } from "cove/sdk";
+import { CoveProvider, useAgentPrompt } from "@cove-framework/cove/react";
+import { createCoveReactiveClient } from "@cove-framework/cove/sdk";
 \`\`\`
 `;
 }

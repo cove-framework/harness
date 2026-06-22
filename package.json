@@ -1,13 +1,16 @@
 {
-  "name": "cove",
+  "name": "@cove-framework/cove",
   "type": "module",
   "version": "0.1.0",
   "description": "Cove — a Convex-native agent harness (rewrite of the flue framework)",
   "license": "MIT",
-  "homepage": "https://github.com/cove-framework/harness#readme",
+  "homepage": "https://github.com/cove-framework/cove#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/cove-framework/harness.git"
+    "url": "git+https://github.com/cove-framework/cove.git"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "engines": {
     "node": ">=22.18"

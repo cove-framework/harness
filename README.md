@@ -22,7 +22,7 @@ Convex deploys functions from *your own* `convex/` directory.
 
 ```bash
 # 1. Install the CLI + client surfaces.
-npm install cove
+npm install @cove-framework/cove
 
 # 2. Scaffold a project (vendors the backend you own + an example agent).
 npx cove init my-agent
@@ -33,10 +33,10 @@ npm run dev             # cove dev: codegen + validate, then convex dev
 
 - **npm package (`cove`)** — the `cove` CLI plus the client/authoring surfaces, imported via
   subpath exports built to `dist/`:
-  - `cove/runtime` — the V8-safe core (`createAgent`, `defineTool`, types).
-  - `cove/sdk` — the Convex-native consumer client (`createCoveReactiveClient`, no SSE).
-  - `cove/react` — `CoveProvider` + hooks (`useAgentPrompt`, `useCoveRun`, …).
-  - `cove/cli` — `defineCoveConfig` + programmatic build/codegen entry points.
+  - `@cove-framework/cove/runtime` — the V8-safe core (`createAgent`, `defineTool`, types).
+  - `@cove-framework/cove/sdk` — the Convex-native consumer client (`createCoveReactiveClient`, no SSE).
+  - `@cove-framework/cove/react` — `CoveProvider` + hooks (`useAgentPrompt`, `useCoveRun`, …).
+  - `@cove-framework/cove/cli` — `defineCoveConfig` + programmatic build/codegen entry points.
 - **`cove init` scaffold** — copies this package's `convex/` engine + `src/runtime/` core into
   your project (you own and deploy them), then writes `cove.config.ts`, a starter
   `agentRegistry.ts`, env/tsconfig, and a README.
