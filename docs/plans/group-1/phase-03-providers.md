@@ -1,5 +1,5 @@
 # Phase 3 — Provider registry — AI SDK gateway
-> Stand up `convex/providers/`: the AI SDK gateway registry, the `registerProvider` facade, `ModelConfig`→gateway-id resolution to `ModelHandle`, `ThinkingLevel`→per-provider reasoning options (pi-reproduced numeric budgets + `adjustMaxTokensForThinking`), the `storeResponses` flag, `toModelMessages` non-vision downgrade + `sanitizeSurrogates`, and the `MockLanguageModelV2` test-model seam (M5). Design-of-record: [06 — Roadmap](../design/06-phase-roadmap.md) + docs cited below. Decisions: [D1–D19](../design/07-risks-and-decisions.md).
+> Stand up `convex/providers/`: the AI SDK gateway registry, the `registerProvider` facade, `ModelConfig`→gateway-id resolution to `ModelHandle`, `ThinkingLevel`→per-provider reasoning options (pi-reproduced numeric budgets + `adjustMaxTokensForThinking`), the `storeResponses` flag, `toModelMessages` non-vision downgrade + `sanitizeSurrogates`, and the `MockLanguageModelV2` test-model seam (M5). Design-of-record: [06 — Roadmap](../../design/06-phase-roadmap.md) + docs cited below. Decisions: [D1–D19](../../design/07-risks-and-decisions.md).
 
 ## Goal & scope
 
@@ -26,7 +26,7 @@ engine (P4) calls from `engine/llmStep`/`engine/setup`:
 - The **`MockLanguageModelV2` test-model seam** — `resolveModel` honors a reserved
   test model id returning a mock-backed `ModelHandle`; the seam is the single
   deterministic injection point P3/P4 tests drive (flue's `providers/faux.ts` is
-  **not** ported, superseded — [08 §5](../design/08-conventions-and-execution-boundary.md#5-dropped--obsolete-explicit)).
+  **not** ported, superseded — [08 §5](../../design/08-conventions-and-execution-boundary.md#5-dropped--obsolete-explicit)).
 
 **Out of scope** (later phases): the durable loop and `streamText` call itself
 (P4 — this phase only supplies the resolved model + outbound transform + usage
@@ -39,13 +39,13 @@ no sessions, no engine actions.
 
 - **P1 (required, landed).** `ModelHandle`, `ModelConfig`, `ThinkingLevel`, the
   canonical `Message`/`UserMessage`/`AssistantMessage`/`ToolResultMessage`/`Usage`
-  shapes ([`src/runtime/messages.ts`](../../src/runtime/messages.ts)), and
+  shapes ([`src/runtime/messages.ts`](../../../src/runtime/messages.ts)), and
   `ProviderRegistrationError`/`ModelNotConfiguredError`
-  ([`src/runtime/errors.ts`](../../src/runtime/errors.ts)) all already exist on disk
-  and are exported from [`src/runtime/index.ts`](../../src/runtime/index.ts). This
+  ([`src/runtime/errors.ts`](../../../src/runtime/errors.ts)) all already exist on disk
+  and are exported from [`src/runtime/index.ts`](../../../src/runtime/index.ts). This
   phase **consumes** them and may *widen* `ModelHandle` (see Implementation task 2),
   but must not break the existing `AgentRuntimeConfig.resolveModel` signature in
-  [`src/runtime/types.ts`](../../src/runtime/types.ts) (line 270:
+  [`src/runtime/types.ts`](../../../src/runtime/types.ts) (line 270:
   `resolveModel: (model: ModelConfig | undefined) => ModelHandle | undefined`).
 - **AI SDK deps (already in `package.json`):** `ai@^5`, `@ai-sdk/gateway@^3`,
   `@ai-sdk/anthropic@^2`, `@ai-sdk/google@^3`, `@ai-sdk/openai@^2`,
@@ -70,24 +70,24 @@ Create `convex/providers/` (a `"use node"` module — it imports the AI SDK):
 | `convex/providers/messages.ts` | `toModelMessages(messages, handle) → ModelMessage[]`: ports `downgradeUnsupportedImages`/`replaceImagesWithPlaceholder` from pi's `transform-messages.ts` and applies `sanitizeSurrogates` (ported from pi's `utils/sanitize-unicode.ts`) to every outbound text field, then maps canonical `Message[]`→AI SDK `ModelMessage[]`. |
 | `convex/providers/sanitize.ts` | `sanitizeSurrogates(text)` — the lone-unpaired-surrogate stripper, ported 1:1 from pi's `utils/sanitize-unicode.ts` (the single regex). Standalone so P4/P5 can reuse it. |
 | `convex/providers/testModel.ts` | The `MockLanguageModelV2` seam: `RESERVED_TEST_MODEL_ID` constant, `isTestModelId(id)`, and `makeTestModelHandle(mock?) → ModelHandle` wrapping a `MockLanguageModelV2` from `@ai-sdk/provider-utils/test`. The deterministic injection point for P3/P4 smoke + replay tests. |
-| `convex/providers/usage.ts` *(optional, if it keeps P4 unblocked)* | `fromProviderUsage`/`addUsage`/`emptyUsage` primitives ported from flue's [`usage.ts`](../../../flue/packages/runtime/src/usage.ts). Pure functions; no AI SDK import needed. Bridges AI SDK `inputTokens`/`outputTokens` ↔ rollup. *Defer to P4 if it complicates the V8-safe boundary.* |
+| `convex/providers/usage.ts` *(optional, if it keeps P4 unblocked)* | `fromProviderUsage`/`addUsage`/`emptyUsage` primitives ported from flue's [`usage.ts`](../../../../flue/packages/runtime/src/usage.ts). Pure functions; no AI SDK import needed. Bridges AI SDK `inputTokens`/`outputTokens` ↔ rollup. *Defer to P4 if it complicates the V8-safe boundary.* |
 
 ## Source map (flue/pi → cove)
 
 | flue/pi source (verified exists) | Target cove file | Port / transform notes |
 | --- | --- | --- |
-| [`flue · runtime/src/internal.ts`](../../../flue/packages/runtime/src/internal.ts) `resolveModel` (lines 111–149) | `convex/providers/gateway.ts` `resolveModel` | Keep the `provider/model` split + error messages; **rebrand `[flue]`→`[cove]`**. Return a **`ModelHandle`** (AI SDK gateway) instead of pi-ai `Model<Api>`. Registered providers still win over the catalog. |
-| [`flue · runtime/src/runtime/providers.ts`](../../../flue/packages/runtime/src/runtime/providers.ts) (`registerProvider`, `registerApiProvider`, `ProviderRegistration`, `HttpProviderRegistration`, `resolveRegisteredModel`, `getRegisteredStoreResponses`, `getRegisteredApiKey`, `buildModelFromRegistration`, `zeroMetadataModel`) | `convex/providers/registry.ts` | Port the HTTP-provider path; **drop all Cloudflare-binding code** (`CloudflareAIBindingRegistration`, `isCloudflareBindingRegistration`, `attachModelBinding`, `getModelBinding`, `getModelGateway`, the `cloudflare-model.ts` import) per [08 §5](../design/08-conventions-and-execution-boundary.md#5-dropped--obsolete-explicit). `ProviderRegistration` collapses to just `HttpProviderRegistration`. Keep `storeResponses?: boolean` on the registration. Throw the existing **`ProviderRegistrationError`** from [`src/runtime/errors.ts`](../../src/runtime/errors.ts). |
-| [`pi · ai/src/providers/simple-options.ts`](../../../pi/packages/ai/src/providers/simple-options.ts) (`adjustMaxTokensForThinking`, `clampReasoning`) | `convex/providers/thinking.ts` | Port **verbatim** — the budgets `{minimal:1024, low:2048, medium:8192, high:16384}`, `minOutputTokens:1024`, and the fit math `Math.min(baseMaxTokens + thinkingBudget, modelMaxTokens)` + the `maxTokens <= thinkingBudget` clamp. This is the load-bearing fidelity contract. |
-| [`pi · ai/src/providers/anthropic.ts`](../../../pi/packages/ai/src/providers/anthropic.ts) (thinking block, lines ~760–790: `adjustMaxTokensForThinking` call → `thinkingBudgetTokens`) | `convex/providers/thinking.ts` (anthropic/bedrock branch) | Read for the **shape only**: anthropic/bedrock map to an explicit **reasoning token budget** carved out of `maxTokens`. Emit `providerOptions.anthropic.thinking = { type:'enabled', budgetTokens }` (AI SDK shape) instead of the raw Anthropic SDK `thinkingBudgetTokens`. |
-| [`pi · ai/src/providers/openai-responses.ts`](../../../pi/packages/ai/src/providers/openai-responses.ts) (`reasoningEffort` mapping ~176–276; `store: false` line 243) | `convex/providers/thinking.ts` (openai branch) | openai maps `ThinkingLevel`→`providerOptions.openai.reasoningEffort` (`off`→omit). `storeResponses` threads to `providerOptions.openai.store` (pi hard-codes `store:false`; cove makes it the registration/request flag). |
-| [`pi · ai/src/providers/google.ts`](../../../pi/packages/ai/src/providers/google.ts) (`thinkingConfig`/`thinkingBudget` ~291–428) | `convex/providers/thinking.ts` (google branch) | google maps to `providerOptions.google.thinkingConfig = { thinkingBudget, includeThoughts:true }`; `off` → `{ thinkingBudget: 0 }`. |
-| [`pi · ai/src/providers/transform-messages.ts`](../../../pi/packages/ai/src/providers/transform-messages.ts) (`downgradeUnsupportedImages`, `replaceImagesWithPlaceholder`, the two placeholder constants) | `convex/providers/messages.ts` | Port the downgrade pass: when `!handle.supportsVision`, REPLACE image blocks in `user`/`toolResult` with a text placeholder, **de-dupe consecutive placeholders**. Skip pi's tool-call-id normalization + synthetic-tool-result passes (those belong to P4's context rebuild, not the outbound transform). |
-| [`pi · ai/src/utils/sanitize-unicode.ts`](../../../pi/packages/ai/src/providers/../utils/sanitize-unicode.ts) (`sanitizeSurrogates`) | `convex/providers/sanitize.ts` | Port the single regex 1:1. Apply across all outbound text/reasoning/tool-result text in `toModelMessages`. |
-| [`pi · ai/src/models.ts`](../../../pi/packages/ai/src/models.ts) (`getSupportedThinkingLevels`, `clampThinkingLevel`, `EXTENDED_THINKING_LEVELS`) | `convex/providers/thinking.ts` (clamp helper) | Port `clampThinkingLevel` so a requested level that the model doesn't support snaps to the nearest supported one before budget mapping. `EXTENDED_THINKING_LEVELS = ["off","minimal","low","medium","high","xhigh"]`. |
-| [`pi · ai/src/api-registry.ts`](../../../pi/packages/ai/src/api-registry.ts) (`registerApiProvider` module-scoped map, last-write-wins) | `convex/providers/registry.ts` `registerApiProvider` | Port the **last-write-wins, module-scoped** semantics (re-register on every isolate boot, no dedupe). In cove this registers a custom AI SDK provider factory for an `api` slug the gateway doesn't ship. |
-| [`flue · runtime/src/usage.ts`](../../../flue/packages/runtime/src/usage.ts) (`fromProviderUsage`, `addUsage`, `emptyUsage`) | `convex/providers/usage.ts` *(optional)* | Pure helpers; bridge AI SDK `inputTokens`/`outputTokens` ↔ the `Usage` rollup (see [08 §4.7](../design/08-conventions-and-execution-boundary.md#47-usage--cost) — provider side uses `inputTokens`/`outputTokens`, caller side `input`/`output`). Defer to P4 if it muddies the V8 boundary. |
-| `pi · ai/src/providers/faux.ts` | **(not ported)** | Superseded by `MockLanguageModelV2` (M5, [08 §5](../design/08-conventions-and-execution-boundary.md#5-dropped--obsolete-explicit)). Do **not** port. |
+| [`flue · runtime/src/internal.ts`](../../../../flue/packages/runtime/src/internal.ts) `resolveModel` (lines 111–149) | `convex/providers/gateway.ts` `resolveModel` | Keep the `provider/model` split + error messages; **rebrand `[flue]`→`[cove]`**. Return a **`ModelHandle`** (AI SDK gateway) instead of pi-ai `Model<Api>`. Registered providers still win over the catalog. |
+| [`flue · runtime/src/runtime/providers.ts`](../../../../flue/packages/runtime/src/runtime/providers.ts) (`registerProvider`, `registerApiProvider`, `ProviderRegistration`, `HttpProviderRegistration`, `resolveRegisteredModel`, `getRegisteredStoreResponses`, `getRegisteredApiKey`, `buildModelFromRegistration`, `zeroMetadataModel`) | `convex/providers/registry.ts` | Port the HTTP-provider path; **drop all Cloudflare-binding code** (`CloudflareAIBindingRegistration`, `isCloudflareBindingRegistration`, `attachModelBinding`, `getModelBinding`, `getModelGateway`, the `cloudflare-model.ts` import) per [08 §5](../../design/08-conventions-and-execution-boundary.md#5-dropped--obsolete-explicit). `ProviderRegistration` collapses to just `HttpProviderRegistration`. Keep `storeResponses?: boolean` on the registration. Throw the existing **`ProviderRegistrationError`** from [`src/runtime/errors.ts`](../../../src/runtime/errors.ts). |
+| [`pi · ai/src/providers/simple-options.ts`](../../../../pi/packages/ai/src/providers/simple-options.ts) (`adjustMaxTokensForThinking`, `clampReasoning`) | `convex/providers/thinking.ts` | Port **verbatim** — the budgets `{minimal:1024, low:2048, medium:8192, high:16384}`, `minOutputTokens:1024`, and the fit math `Math.min(baseMaxTokens + thinkingBudget, modelMaxTokens)` + the `maxTokens <= thinkingBudget` clamp. This is the load-bearing fidelity contract. |
+| [`pi · ai/src/providers/anthropic.ts`](../../../../pi/packages/ai/src/providers/anthropic.ts) (thinking block, lines ~760–790: `adjustMaxTokensForThinking` call → `thinkingBudgetTokens`) | `convex/providers/thinking.ts` (anthropic/bedrock branch) | Read for the **shape only**: anthropic/bedrock map to an explicit **reasoning token budget** carved out of `maxTokens`. Emit `providerOptions.anthropic.thinking = { type:'enabled', budgetTokens }` (AI SDK shape) instead of the raw Anthropic SDK `thinkingBudgetTokens`. |
+| [`pi · ai/src/providers/openai-responses.ts`](../../../../pi/packages/ai/src/providers/openai-responses.ts) (`reasoningEffort` mapping ~176–276; `store: false` line 243) | `convex/providers/thinking.ts` (openai branch) | openai maps `ThinkingLevel`→`providerOptions.openai.reasoningEffort` (`off`→omit). `storeResponses` threads to `providerOptions.openai.store` (pi hard-codes `store:false`; cove makes it the registration/request flag). |
+| [`pi · ai/src/providers/google.ts`](../../../../pi/packages/ai/src/providers/google.ts) (`thinkingConfig`/`thinkingBudget` ~291–428) | `convex/providers/thinking.ts` (google branch) | google maps to `providerOptions.google.thinkingConfig = { thinkingBudget, includeThoughts:true }`; `off` → `{ thinkingBudget: 0 }`. |
+| [`pi · ai/src/providers/transform-messages.ts`](../../../../pi/packages/ai/src/providers/transform-messages.ts) (`downgradeUnsupportedImages`, `replaceImagesWithPlaceholder`, the two placeholder constants) | `convex/providers/messages.ts` | Port the downgrade pass: when `!handle.supportsVision`, REPLACE image blocks in `user`/`toolResult` with a text placeholder, **de-dupe consecutive placeholders**. Skip pi's tool-call-id normalization + synthetic-tool-result passes (those belong to P4's context rebuild, not the outbound transform). |
+| [`pi · ai/src/utils/sanitize-unicode.ts`](../../../../pi/packages/ai/src/providers/../utils/sanitize-unicode.ts) (`sanitizeSurrogates`) | `convex/providers/sanitize.ts` | Port the single regex 1:1. Apply across all outbound text/reasoning/tool-result text in `toModelMessages`. |
+| [`pi · ai/src/models.ts`](../../../../pi/packages/ai/src/models.ts) (`getSupportedThinkingLevels`, `clampThinkingLevel`, `EXTENDED_THINKING_LEVELS`) | `convex/providers/thinking.ts` (clamp helper) | Port `clampThinkingLevel` so a requested level that the model doesn't support snaps to the nearest supported one before budget mapping. `EXTENDED_THINKING_LEVELS = ["off","minimal","low","medium","high","xhigh"]`. |
+| [`pi · ai/src/api-registry.ts`](../../../../pi/packages/ai/src/api-registry.ts) (`registerApiProvider` module-scoped map, last-write-wins) | `convex/providers/registry.ts` `registerApiProvider` | Port the **last-write-wins, module-scoped** semantics (re-register on every isolate boot, no dedupe). In cove this registers a custom AI SDK provider factory for an `api` slug the gateway doesn't ship. |
+| [`flue · runtime/src/usage.ts`](../../../../flue/packages/runtime/src/usage.ts) (`fromProviderUsage`, `addUsage`, `emptyUsage`) | `convex/providers/usage.ts` *(optional)* | Pure helpers; bridge AI SDK `inputTokens`/`outputTokens` ↔ the `Usage` rollup (see [08 §4.7](../../design/08-conventions-and-execution-boundary.md#47-usage--cost) — provider side uses `inputTokens`/`outputTokens`, caller side `input`/`output`). Defer to P4 if it muddies the V8 boundary. |
+| `pi · ai/src/providers/faux.ts` | **(not ported)** | Superseded by `MockLanguageModelV2` (M5, [08 §5](../../design/08-conventions-and-execution-boundary.md#5-dropped--obsolete-explicit)). Do **not** port. |
 | `pi · ai/src/models.generated.ts` (453 KB) | **(not ported)** | Distill a hand-maintained subset into `convex/providers/capabilities.ts`. Do **not** copy the generated blob. |
 
 ## Hardened-contract obligations
@@ -96,43 +96,43 @@ This phase **does not own** any of the durable-loop §4 contracts (those land in
 but it must **supply the primitives** several of them depend on, and it must honor the
 execution-boundary rules:
 
-- **[08 §3 — execution boundary](../design/08-conventions-and-execution-boundary.md#3-the-execution-boundary-core-philosophy).**
+- **[08 §3 — execution boundary](../../design/08-conventions-and-execution-boundary.md#3-the-execution-boundary-core-philosophy).**
   `convex/providers/*` is a **`"use node"` module** (it imports the AI SDK). It is
   reached **only from `"use node"` engine actions** (`llmStep`, `setup`) — never from
   queries/mutations. It **touches no box** (no `SessionEnv`). The module exposes pure
   resolution + transform functions; it does not orchestrate or persist.
-- **[08 §4.1 — replay determinism](../design/08-conventions-and-execution-boundary.md#41-llmstep-replay-determinism-critical).**
+- **[08 §4.1 — replay determinism](../../design/08-conventions-and-execution-boundary.md#41-llmstep-replay-determinism-critical).**
   `resolveModel` must be **deterministic for a given `(ModelConfig, registry state)`**
   — same input → same `ModelHandle` capabilities — so a replayed `llmStep` that *does*
   re-resolve (before hitting the finalized-row guard) produces an identical handle. The
   **mock seam** is what makes the P4 replay test exact: the reserved test model id
   resolves to a `MockLanguageModelV2` whose canned response is byte-stable.
-- **[08 §4.2 — action budgets](../design/08-conventions-and-execution-boundary.md#42-action-budgets--timeouts).**
+- **[08 §4.2 — action budgets](../../design/08-conventions-and-execution-boundary.md#42-action-budgets--timeouts).**
   `buildProviderOptions` must not silently strip a caller `maxTokens`; the
   `adjustMaxTokensForThinking` fit guarantees `thinkingBudget ≤ maxTokens` so the
   240 s stream deadline (P4) operates on a model request that *can* terminate. Surface
   the resolved `maxOutputTokens` on the `ModelHandle` for P4's deadline math.
-- **[08 §4.7 — usage & cost](../design/08-conventions-and-execution-boundary.md#47-usage--cost).**
+- **[08 §4.7 — usage & cost](../../design/08-conventions-and-execution-boundary.md#47-usage--cost).**
   If `usage.ts` ports here, honor the **two field-name conventions** (provider/rollup
   side `inputTokens`/`outputTokens`; caller side `input`/`output`) and keep the cache
   fields (`cacheRead`/`cacheWrite`/`cacheWrite1h`) + per-model `cost{}` — never a
   token-only subset.
-- **[08 §4.8 — image pipeline (downgrade leg)](../design/08-conventions-and-execution-boundary.md#48-image-pipeline).**
+- **[08 §4.8 — image pipeline (downgrade leg)](../../design/08-conventions-and-execution-boundary.md#48-image-pipeline).**
   The non-vision downgrade in `toModelMessages` is the **last leg** of the image
   pipeline: REPLACE (not drop) image parts with a placeholder, de-dupe consecutive
   placeholders. This is mandatory — a non-vision model **400s on raw image parts**
-  ([04 — Durable Engine, `toModelMessages`](../design/04-durable-engine.md)).
-- **[08 §2 — reference-header convention](../design/08-conventions-and-execution-boundary.md#2-reference-header-convention).**
+  ([04 — Durable Engine, `toModelMessages`](../../design/04-durable-engine.md)).
+- **[08 §2 — reference-header convention](../../design/08-conventions-and-execution-boundary.md#2-reference-header-convention).**
   Every file opens with the origin header. pi-derived files cite pi; the gateway/registry
   files cite flue; `testModel.ts`/`capabilities.ts` are "New (Convex backend)" but cite
   the pattern source.
-- **[05 — Provider credential detection](../design/05-public-api-and-sdk.md#environment--configuration).**
+- **[05 — Provider credential detection](../../design/05-public-api-and-sdk.md#environment--configuration).**
   Provider detection resolves **keyless ambient credentials** — Google ADC via
   `GOOGLE_APPLICATION_CREDENTIALS`, AWS Bedrock via the AWS chain
   (`AWS_PROFILE`/IAM/ECS/IRSA) — **not only literal API keys** read from Convex env.
   Detection is **plain Convex env reads** (no Worker/Node `env`-object plumbing). The
   gcloud-config filesystem ADC probe is **NOT** included here (real-machine-bash-adapter
-  only, [D7](../design/07-risks-and-decisions.md)).
+  only, [D7](../../design/07-risks-and-decisions.md)).
 
 ## Implementation tasks
 
@@ -140,7 +140,7 @@ Ordered, buildable. `tsc --noEmit` stays green after every task.
 
 1. **[ ] Scaffold `convex/providers/` with reference headers + `"use node"`.**
    Create the eight files (skip `usage.ts` unless task 11 needs it). Each opens with
-   the [§2](../design/08-conventions-and-execution-boundary.md#2-reference-header-convention)
+   the [§2](../../design/08-conventions-and-execution-boundary.md#2-reference-header-convention)
    header. Put `"use node";` at the top of every file that imports the AI SDK
    (`gateway.ts`, `thinking.ts`, `messages.ts`, `testModel.ts`, `index.ts`); `sanitize.ts`,
    `capabilities.ts`, and `registry.ts`'s pure types may stay node-free but the barrel
@@ -243,7 +243,7 @@ Ordered, buildable. `tsc --noEmit` stays green after every task.
 
 11. **[ ] (Optional) Port usage primitives → `convex/providers/usage.ts`.**
     Only if it unblocks P4 cleanly: `fromProviderUsage`/`addUsage`/`emptyUsage` from flue's
-    `usage.ts`, honoring the dual field-name convention + cache/cost fields ([§4.7](../design/08-conventions-and-execution-boundary.md#47-usage--cost)).
+    `usage.ts`, honoring the dual field-name convention + cache/cost fields ([§4.7](../../design/08-conventions-and-execution-boundary.md#47-usage--cost)).
     Otherwise note "deferred to P4" and skip.
 
 12. **[ ] Barrel `convex/providers/index.ts`.**
@@ -264,7 +264,7 @@ Ordered, buildable. `tsc --noEmit` stays green after every task.
 
 ## Acceptance
 
-Start from [06 P3's acceptance](../design/06-phase-roadmap.md#-phase-3--provider-registry)
+Start from [06 P3's acceptance](../../design/06-phase-roadmap.md#-phase-3--provider-registry)
 and the coverage additions. Each is a concrete pass/fail test driven through the mock seam:
 
 1. **Capability resolution.** `resolveModel("anthropic/claude-sonnet-4-6")` returns a
@@ -343,6 +343,6 @@ and the coverage additions. Each is a concrete pass/fail test driven through the
   `import type` for the AI SDK type imports that are types-only (`LanguageModelV2`,
   `ModelMessage`) to avoid emitting runtime imports where unintended.
 - **Credential detection is env-only inside Convex.** No filesystem gcloud-config probe
-  here ([D7](../design/07-risks-and-decisions.md) — that's real-machine-bash-adapter only).
+  here ([D7](../../design/07-risks-and-decisions.md) — that's real-machine-bash-adapter only).
   Read `GOOGLE_APPLICATION_CREDENTIALS` / the AWS chain from `process.env`; do not shell out
   or touch the FS.
