@@ -14,6 +14,7 @@ import type { Id } from "../_generated/dataModel";
 import { type ActionCtx, internalAction } from "../_generated/server";
 import type { SessionEnv } from "../../src/runtime/types.ts";
 import { emitFromAction } from "../events/emit.ts";
+import { resolveMcpTool } from "../mcp/pool.ts";
 import { localBash } from "../sandbox/localBash.ts";
 import { buildExecutableTools } from "./buildTools.ts";
 import { runDispatch } from "./dispatch.ts";
@@ -164,7 +165,14 @@ export const run = internalAction({
 			const env = await resolveSandbox(plan.sessionId, plan.cwd);
 			const resultBundle =
 				plan.resultSchema !== undefined ? createResultToolsFromJsonSchema(plan.resultSchema) : undefined;
-			const executable = buildExecutableTools(plan.tools, { env, userTools: new Map(), resultBundle });
+			// mcpResolve binds kind:"mcp" descriptors to a network client per beat (G2.2); supplied only here
+			// (the "use node" action), so buildExecutableTools stays pure for llmStep's model view.
+			const executable = buildExecutableTools(plan.tools, {
+				env,
+				userTools: new Map(),
+				resultBundle,
+				mcpResolve: resolveMcpTool,
+			});
 			await runDispatch(otherCalls, executable, { isCancelled, appendToolResult });
 		}
 

@@ -7,6 +7,7 @@
 
 import { v } from "convex/values";
 import { internalMutation } from "../_generated/server";
+import type { McpToolDescriptor } from "../../src/runtime/mcp-types.ts";
 import type { SessionEnv } from "../../src/runtime/types.ts";
 import { emitFromMutation } from "../events/emit.ts";
 import { createFrameworkTools } from "./frameworkTools.ts";
@@ -22,8 +23,12 @@ const SYSTEM_PREAMBLE =
 	"Use the available tools to inspect and modify the workspace; finish when the task is complete.";
 
 export const run = internalMutation({
-	args: { requestId: v.id("agentRequests") },
-	handler: async (ctx, { requestId }) => {
+	args: {
+		requestId: v.id("agentRequests"),
+		// Frozen MCP descriptors from the "use node" discovery hop (G2.2); appended as kind:"mcp" tools.
+		discoveredMcp: v.optional(v.array(v.any())),
+	},
+	handler: async (ctx, { requestId, discoveredMcp }) => {
 		const request = await ctx.db.get(requestId);
 		if (!request) throw new Error(`[cove] request ${requestId} not found`);
 		const session = await ctx.db.get(request.sessionId);
@@ -88,6 +93,29 @@ export const run = internalMutation({
 			}
 			sections.push(buildResultFooter());
 		}
+		// MCP tools (G2.2): append the closure-free descriptors discovered by the "use node" discovery hop.
+		// The reserved-name + inter-server collision check fails loud here — an MCP tool can never silently
+		// shadow a framework built-in (task/finish/give_up/activate_skill) or another server's frozen name.
+		const mcpDescriptors = (discoveredMcp ?? []) as McpToolDescriptor[];
+		if (mcpDescriptors.length > 0) {
+			const existingNames = new Set(tools.map((t) => t.name));
+			for (const descriptor of mcpDescriptors) {
+				if (existingNames.has(descriptor.name)) {
+					throw new Error(
+						`[cove] MCP tool "${descriptor.name}" collides with an existing tool name (framework built-in or another MCP server).`,
+					);
+				}
+				existingNames.add(descriptor.name);
+				tools.push({
+					name: descriptor.name,
+					description: descriptor.description,
+					parameters: descriptor.parameters,
+					kind: "mcp",
+					mcp: descriptor,
+				});
+			}
+		}
+
 		const systemPrompt = sections.join("\n\n");
 
 		await ctx.db.patch(request.sessionId, {

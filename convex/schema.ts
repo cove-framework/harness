@@ -181,6 +181,8 @@ export default defineSchema({
     resultSchema: v.optional(v.any()),
     // Tool names requiring human approval (HITL; frozen onto the plan at setup, doc 08 §4.4).
     approvalTools: v.optional(v.array(v.string())),
+    // Declared MCP servers (G2.2). Discovered + frozen as kind:"mcp" plan tools at setup.
+    mcpServers: v.optional(v.array(v.any())),
     // The skill ref / subagent name for kind="skill"/"task".
     target: v.optional(v.string()),
     // Nested task-delegation depth (0 = top-level); child = parent+1, bounded by MAX_TASK_DEPTH (doc 04).

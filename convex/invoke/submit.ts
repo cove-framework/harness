@@ -16,6 +16,7 @@ export const submitPrompt = mutation({
 		sessionName: v.optional(v.string()),
 		resultSchema: v.optional(v.any()),
 		approvalTools: v.optional(v.array(v.string())),
+		mcpServers: v.optional(v.array(v.any())),
 	},
 	handler: async (ctx, args): Promise<AdmitResult> =>
 		admitPrompt(ctx, {
@@ -26,6 +27,7 @@ export const submitPrompt = mutation({
 			model: args.model,
 			resultSchema: args.resultSchema,
 			approvalTools: args.approvalTools,
+			mcpServers: args.mcpServers,
 			supersede: true,
 		}),
 });

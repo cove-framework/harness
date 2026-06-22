@@ -8,6 +8,7 @@ import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import type { AgentMessage } from "../../src/runtime/messages.ts";
+import type { McpServerOptions } from "../../src/runtime/mcp-types.ts";
 import { assertPublicSessionName } from "../../src/runtime/session-identity.ts";
 import { appendCanonicalEntry, generateAffinityKey } from "../sessions/persist.ts";
 import { workflow } from "../workflow.ts";
@@ -87,6 +88,8 @@ export interface AdmitPromptArgs extends SessionRef {
 	resultSchema?: unknown;
 	/** Tool names that require human approval before dispatch (HITL gate, doc 08 §4.4). */
 	approvalTools?: string[];
+	/** Declared MCP servers (G2.2); discovered + frozen as kind:"mcp" plan tools at setup. */
+	mcpServers?: McpServerOptions[];
 	/** Supersede any in-flight request on the session before admitting (doc 06 P6 concurrent-prompt gate). */
 	supersede: boolean;
 }
@@ -116,6 +119,7 @@ export async function admitPrompt(ctx: MutationCtx, args: AdmitPromptArgs): Prom
 		expectsResult: args.resultSchema !== undefined ? true : undefined,
 		resultSchema: args.resultSchema,
 		approvalTools: args.approvalTools,
+		mcpServers: args.mcpServers,
 		createdAt: now,
 		updatedAt: now,
 	});

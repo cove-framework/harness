@@ -128,16 +128,64 @@ describe("buildExecutableTools", () => {
 		expect(r.terminate).toBe(true);
 	});
 
-	it("an mcp descriptor degrades to an error tool-result (P10)", async () => {
-		const desc: FrozenToolDescriptor = {
-			name: "mcp_tool",
-			description: "mcp",
-			parameters: { type: "object" },
-			kind: "mcp",
-			mcp: { serverId: "s", transport: {} },
+	const mcpDesc: FrozenToolDescriptor = {
+		name: "mcp__srv__search",
+		description: "MCP search tool",
+		parameters: { type: "object", properties: {}, additionalProperties: false },
+		kind: "mcp",
+		mcp: {
+			serverId: "srv",
+			transport: "streamable-http",
+			url: "https://example.test/mcp",
+			toolName: "search",
+			name: "mcp__srv__search",
+			description: "MCP search tool",
+			parameters: { type: "object", properties: {} },
+		},
+	};
+
+	it("exposes an mcp descriptor as a JSON-Schema tool in the model view", () => {
+		const view = buildModelView([mcpDesc]);
+		expect(view).toEqual([
+			{
+				name: "mcp__srv__search",
+				description: "MCP search tool",
+				parameters: { type: "object", properties: {}, additionalProperties: false },
+			},
+		]);
+	});
+
+	it("an mcp descriptor binds via the injected resolver (success path)", async () => {
+		let called = false;
+		const mcpResolve = (d: FrozenToolDescriptor) => ({
+			name: d.name,
+			description: d.description,
+			parameters: d.parameters,
+			async execute(): Promise<EngineToolResult> {
+				called = true;
+				return { content: [{ type: "text" as const, text: "mcp ok" }] };
+			},
+		});
+		const tools = buildExecutableTools([mcpDesc], { mcpResolve });
+		const r = await tools.get("mcp__srv__search")!.execute({});
+		expect(called).toBe(true);
+		expect(r.isError).toBeFalsy();
+		expect(firstText(r)).toBe("mcp ok");
+	});
+
+	it("an mcp resolver failure degrades to an error tool-result (never a crash)", async () => {
+		const mcpResolve = () => {
+			throw new Error("connect failed");
 		};
-		const tools = buildExecutableTools([desc], {});
-		const r = await tools.get("mcp_tool")!.execute({});
+		const tools = buildExecutableTools([mcpDesc], { mcpResolve });
+		const r = await tools.get("mcp__srv__search")!.execute({});
 		expect(r.isError).toBe(true);
+	});
+
+	it("an mcp descriptor with no resolver degrades (llmStep model-view path)", async () => {
+		const tools = buildExecutableTools([mcpDesc], {});
+		const r = await tools.get("mcp__srv__search")!.execute({});
+		expect(r.isError).toBe(true);
+		expect(firstText(r)).toContain("no resolver");
 	});
 });

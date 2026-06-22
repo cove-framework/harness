@@ -6,6 +6,8 @@
 //
 // Pure / V8-safe: type-only; no Convex, no AI SDK.
 
+import type { McpToolDescriptor } from "../../src/runtime/mcp-types.ts";
+
 /**
  * Kind of a frozen tool descriptor. The frozen schema (name/description/params)
  * is authoritative for the whole run; the executable is rebound per action from
@@ -26,8 +28,8 @@ export interface FrozenToolDescriptor {
 	kind: FrozenToolKind;
 	/** Approval-gated tool (HITL); the loop parks before dispatch (P7). */
 	isHitl?: boolean;
-	/** MCP server identity + transport (P10); present only when kind === "mcp". */
-	mcp?: { serverId: string; transport: unknown };
+	/** Frozen MCP descriptor (server identity + transport + JSON schema, no closure); kind === "mcp" only. */
+	mcp?: McpToolDescriptor;
 }
 
 export interface EngineToolContentText {

@@ -14,7 +14,15 @@ import { workflow } from "../workflow.ts";
 export const agentRun = workflow.define({
 	args: { requestId: v.id("agentRequests") },
 	handler: async (step, { requestId }) => {
-		const plan = await step.runMutation(internal.engine.setup.run, { requestId });
+		// MCP discovery hop (G2.2): when the request declares mcpServers, a "use node" action discovers +
+		// freezes their tools (a journaled checkpoint) BEFORE the freeze mutation, so setup stays a
+		// deterministic mutation. Gated by a cheap query so non-MCP runs skip the node cold start.
+		const mcpServers = await step.runQuery(internal.engine.requests.getMcpServers, { requestId });
+		const discoveredMcp =
+			mcpServers.length > 0
+				? await step.runAction(internal.mcp.discover.run, { requestId })
+				: [];
+		const plan = await step.runMutation(internal.engine.setup.run, { requestId, discoveredMcp });
 
 		try {
 			await runAgentLoop(

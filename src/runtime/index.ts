@@ -6,8 +6,8 @@
  * (dispatch, observe, inspect, providers registration, sandbox factory, HTTP)
  * are exported from the Convex app, not this barrel.
  *
- * Ported so far: agent definition, tools, errors, and the full type contract.
- * Later phases add: session-history, compaction, skill-frontmatter, mcp.
+ * Ported so far: agent definition, tools, errors, the full type contract, and the MCP type surface.
+ * Later phases add: session-history, compaction, skill-frontmatter.
  */
 
 export { createAgent, defineAgentProfile } from "./agent-definition.ts";
@@ -112,3 +112,9 @@ export type {
 	ImageContent,
 	ModelHandle,
 } from "./messages.ts";
+export type {
+	McpServerConnection,
+	McpServerOptions,
+	McpToolDescriptor,
+	McpTransport,
+} from "./mcp-types.ts";

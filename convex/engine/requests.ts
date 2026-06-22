@@ -3,6 +3,7 @@
 
 import { v } from "convex/values";
 import { internalQuery } from "../_generated/server";
+import type { McpServerOptions } from "../../src/runtime/mcp-types.ts";
 import type { FrozenToolDescriptor } from "./types.ts";
 
 /** The frozen plan context an llmStep/dispatchTools action needs (resolved from session.plan at setup). */
@@ -28,5 +29,14 @@ export const getPlanContext = internalQuery({
 			submissionId: request.submissionId,
 			sessionName: session.sessionName,
 		};
+	},
+});
+
+/** The declared MCP servers for a request — read by the "use node" discovery hop before the setup freeze (G2.2). */
+export const getMcpServers = internalQuery({
+	args: { requestId: v.id("agentRequests") },
+	handler: async (ctx, { requestId }): Promise<McpServerOptions[]> => {
+		const request = await ctx.db.get(requestId);
+		return (request?.mcpServers ?? []) as McpServerOptions[];
 	},
 });
