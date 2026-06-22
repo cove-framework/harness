@@ -22,6 +22,11 @@ export const getPlanContext = internalQuery({
 			cwd: session.plan.cwd,
 			resultSchema: session.plan.resultSchema,
 			approvalTools: (session.plan.approvalTools ?? []) as string[],
+			// Event-emit context (G2.1): the stream-key + correlation fields the engine stamps on
+			// every CoveEvent it emits from llmStep/dispatchTools.
+			instanceId: request.instanceId,
+			submissionId: request.submissionId,
+			sessionName: session.sessionName,
 		};
 	},
 });

@@ -114,6 +114,36 @@ export function createCoveClient(
 	};
 }
 
+// ─── Reactive consumer client (createCoveReactiveClient) ─────────────────────
+// Distinct from the runtime-facade transport above: this is the Convex-reactive consumer
+// surface (agents.send/prompt, runs.get/events) ported from @flue/sdk. No SSE / Durable Streams.
+export { createCoveReactiveClient } from "./client.ts";
+export {
+	createCoveEventStream,
+	type CreateCoveEventStreamOptions,
+} from "./event-stream.ts";
+export {
+	CoveApiError,
+	type AgentPromptImage,
+	type AgentPromptOptions,
+	type AgentPromptResult,
+	type AgentSendResult,
+	type AttachedAgentEvent,
+	type CoveConvexClient,
+	type CoveEvent,
+	type CoveEventStream,
+	type CoveReactiveApiRefs,
+	type CoveReactiveClient,
+	type CoveStreamOptions,
+	type CreateCoveReactiveClientOptions,
+	type PromptResponse,
+	type PromptUsage,
+	type RunRecord,
+	type RunStatus,
+	type WorkflowInvokeOptions,
+} from "./types.ts";
+export { IMAGE_DATA_OMITTED } from "./types.ts";
+
 function delay(ms: number, signal: AbortSignal): Promise<void> {
 	return new Promise((resolve, reject) => {
 		const timer = setTimeout(resolve, ms);

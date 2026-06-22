@@ -5,6 +5,7 @@
 import { v } from "convex/values";
 import { internalMutation } from "../_generated/server";
 import type { PromptUsage } from "../../src/runtime/types.ts";
+import { emitFromMutation } from "../events/emit.ts";
 import { addUsage, emptyUsage } from "./usage.ts";
 
 export const run = internalMutation({
@@ -31,6 +32,8 @@ export const run = internalMutation({
 			durationMs += s.durationMs ?? 0;
 		}
 
+		const request = await ctx.db.get(args.requestId);
+
 		await ctx.db.patch(args.requestId, {
 			status: args.status,
 			finalText: args.finalText,
@@ -43,5 +46,19 @@ export const run = internalMutation({
 			usage,
 			updatedAt: Date.now(),
 		});
+
+		// Close the event stream for this operation (G2.1): emit `idle` carrying the submissionId so a
+		// consumer's optimistic-send reconciliation settles.
+		if (request) {
+			const session = await ctx.db.get(request.sessionId);
+			if (session) {
+				await emitFromMutation(ctx, {
+					type: "idle",
+					instanceId: request.instanceId,
+					submissionId: request.submissionId,
+					session: session.sessionName,
+				});
+			}
+		}
 	},
 });

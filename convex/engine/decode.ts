@@ -16,8 +16,8 @@
 
 import type { JSONSchema7, LanguageModelV2 } from "@ai-sdk/provider";
 import { jsonSchema, type ModelMessage, streamText, tool } from "ai";
-import type { ModelHandle } from "../../src/runtime/messages.ts";
-import type { PromptUsage } from "../../src/runtime/types.ts";
+import type { AgentMessage, ModelHandle } from "../../src/runtime/messages.ts";
+import type { CoveEventInput, PromptUsage } from "../../src/runtime/types.ts";
 import { DeltaBatcher, type DeltaBatcherOptions, type DeltaPatch } from "./deltaBatcher.ts";
 import type { ModelToolView, StepDecision, ToolCallRecord } from "./types.ts";
 import { type AiSdkUsage, usageFromAiSdk } from "./usage.ts";
@@ -68,6 +68,13 @@ export interface DecodeDeps {
 	streamDeadlineMs?: number;
 	/** Approval-gated tool names — marks decoded toolCalls isHitl (P7). */
 	hitlToolNames?: ReadonlySet<string>;
+	/**
+	 * Reactive-event emitter (G2.1). Wired by llmStep to `internal.events.append.append`, pre-decorating
+	 * each event with the request's instanceId/submissionId/session. Optional so the pure decode unit
+	 * tests run without it (no events emitted). decode emits the turn's message_start/text/thinking/
+	 * tool_start/message_end/turn events off the AI SDK fullStream + the finalized step.
+	 */
+	emit?: (event: CoveEventInput) => Promise<void>;
 }
 
 export interface DecodeInput {
@@ -75,6 +82,8 @@ export interface DecodeInput {
 	systemPrompt?: string;
 	messages: ModelMessage[];
 	tools: ModelToolView[];
+	/** Opaque per-turn correlation id (llmStep mints `${requestId}:${stepNumber}`); stamped on emitted events. */
+	turnId?: string;
 }
 
 /**
@@ -91,7 +100,31 @@ export async function runDecode(input: DecodeInput, deps: DecodeDeps): Promise<S
 	const now = deps.now ?? Date.now;
 	const start = now();
 	const deadlineMs = deps.streamDeadlineMs ?? STREAM_DEADLINE_MS;
-	const batcher = new DeltaBatcher(deps.patch, { ...deps.batchOptions, now });
+
+	// Reactive-event emission (G2.1). Active only when an emitter + turnId are wired (production llmStep);
+	// the pure unit tests leave both undefined and emit nothing.
+	const emit = deps.emit;
+	const turnId = input.turnId;
+	const canEmit = emit !== undefined && turnId !== undefined;
+	let thinkingStarted = false;
+	if (canEmit) await emit!({ type: "message_start", turnId: turnId!, message: assistantMessageEvent([]) });
+
+	// The delta-batcher sink both patches the step row AND emits append-only text_delta/thinking_delta
+	// events (one per flush, ~10-20/turn — NOT per token), keeping event volume bounded. These deltas are
+	// distinct from the cumulative step-row text (doc 08 §4.6 / G2.1 Risks).
+	const sink = async (patch: DeltaPatch): Promise<void> => {
+		await deps.patch(patch);
+		if (!canEmit) return;
+		if (patch.reasoning) {
+			if (!thinkingStarted) {
+				thinkingStarted = true;
+				await emit!({ type: "thinking_start", turnId: turnId! });
+			}
+			await emit!({ type: "thinking_delta", delta: patch.reasoning, turnId: turnId! });
+		}
+		if (patch.text) await emit!({ type: "text_delta", text: patch.text, turnId: turnId! });
+	};
+	const batcher = new DeltaBatcher(sink, { ...deps.batchOptions, now });
 
 	const result = streamText({
 		model: input.handle.model as LanguageModelV2,
@@ -126,6 +159,15 @@ export async function runDecode(input: DecodeInput, deps: DecodeDeps): Promise<S
 					args: asRecord(part.input),
 					isHitl: deps.hitlToolNames?.has(part.toolName) || undefined,
 				});
+				if (canEmit) {
+					await emit!({
+						type: "tool_start",
+						toolName: part.toolName,
+						toolCallId: part.toolCallId,
+						args: asRecord(part.input),
+						turnId: turnId!,
+					});
+				}
 				break;
 			case "finish-step":
 				modelId = part.response.modelId ?? modelId;
@@ -177,7 +219,54 @@ export async function runDecode(input: DecodeInput, deps: DecodeDeps): Promise<S
 		durationMs: now() - start,
 	};
 	await deps.finalizeStep(finalized);
+
+	// Close the turn (G2.1): the message_end carries the FULL assembled assistant message so the consumer
+	// reducer reconciles its provisional streaming parts (replay-idempotent, doc 08 §4.6) even if a
+	// crash-replay double-emitted deltas; the turn event carries usage/model for the message metadata.
+	if (canEmit) {
+		if (thinkingStarted) await emit!({ type: "thinking_end", content: accReasoning, turnId: turnId! });
+		await emit!({
+			type: "message_end",
+			turnId: turnId!,
+			message: assistantMessageEvent(assistantContentBlocks(accText, accReasoning, toolCalls)),
+		});
+		await emit!({
+			type: "turn",
+			turnId: turnId!,
+			purpose: "agent",
+			durationMs: finalized.durationMs,
+			model: finalized.model,
+			provider: input.handle.provider,
+			usage: finalized.usage,
+			isError: false,
+		});
+	}
+
 	return decisionFromFinalized(finalized);
+}
+
+/**
+ * An assistant AgentMessage carried by a message_start/message_end event. Observational only — the consumer
+ * reconciles on role + content, and the full AssistantMessage metadata (api/usage/timestamp) is both
+ * unavailable at message_start and redundant for rendering — so we cast a minimal {role,content}.
+ */
+function assistantMessageEvent(content: unknown[]): AgentMessage {
+	return { role: "assistant", content } as unknown as AgentMessage;
+}
+
+/** Assemble the streamed turn into content blocks the consumer reducer's snapshotMessage understands. */
+function assistantContentBlocks(
+	text: string,
+	reasoning: string,
+	toolCalls: ToolCallRecord[],
+): unknown[] {
+	const content: unknown[] = [];
+	if (reasoning) content.push({ type: "thinking", thinking: reasoning });
+	if (text) content.push({ type: "text", text });
+	for (const c of toolCalls) {
+		content.push({ type: "toolCall", id: c.toolCallId, name: c.toolName, arguments: c.args });
+	}
+	return content;
 }
 
 /** Reconstruct the step decision from a finalized row — the replay path (no model call). */

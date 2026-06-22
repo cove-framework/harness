@@ -13,6 +13,7 @@ import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { type ActionCtx, internalAction } from "../_generated/server";
 import type { SessionEnv } from "../../src/runtime/types.ts";
+import { emitFromAction } from "../events/emit.ts";
 import { localBash } from "../sandbox/localBash.ts";
 import { buildExecutableTools } from "./buildTools.ts";
 import { runDispatch } from "./dispatch.ts";
@@ -142,6 +143,19 @@ export const run = internalAction({
 				toolName: r.toolName,
 				result: r.result,
 				isError: r.isError,
+			});
+			// Emit the terminal tool event (G2.1) — redacted result, reconciled by toolCallId on the consumer.
+			await emitFromAction(ctx, {
+				type: "tool",
+				toolName: r.toolName,
+				toolCallId: r.toolCallId,
+				isError: r.isError ?? false,
+				result: r.result,
+				durationMs: 0,
+				instanceId: plan.instanceId,
+				submissionId: plan.submissionId,
+				session: plan.sessionName,
+				turnId: `${requestId}:${stepNumber}`,
 			});
 		};
 

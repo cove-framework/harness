@@ -8,6 +8,7 @@
 import { v } from "convex/values";
 import { internalMutation } from "../_generated/server";
 import type { SessionEnv } from "../../src/runtime/types.ts";
+import { emitFromMutation } from "../events/emit.ts";
 import { createFrameworkTools } from "./frameworkTools.ts";
 import { buildResultFooter, createResultToolsFromJsonSchema } from "./resultTools.ts";
 import { TASK_DESCRIPTION, TASK_PARAMS } from "./task.ts";
@@ -104,6 +105,17 @@ export const run = internalMutation({
 			updatedAt: Date.now(),
 		});
 		await ctx.db.patch(requestId, { status: "running", updatedAt: Date.now() });
+
+		// Open the event stream for this operation (G2.1). operationId === submissionId; the operation kind
+		// mirrors the request kind. Carries the stream-key fan-out fields (instanceId/session).
+		await emitFromMutation(ctx, {
+			type: "operation_start",
+			operationId: request.submissionId,
+			operationKind: request.kind,
+			instanceId: request.instanceId,
+			submissionId: request.submissionId,
+			session: session.sessionName,
+		});
 
 		return { sessionId: request.sessionId, maxSteps, maxFollowUps, hasResultSchema };
 	},

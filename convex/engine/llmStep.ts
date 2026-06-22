@@ -9,6 +9,7 @@ import { internalAction } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { SessionHistory } from "../../src/runtime/session-history.ts";
 import type { Message } from "../../src/runtime/messages.ts";
+import { emitFromAction } from "../events/emit.ts";
 import { resolveModel } from "../providers/gateway.ts";
 import { toModelMessages } from "../providers/messages.ts";
 import { buildModelView } from "./buildTools.ts";
@@ -29,8 +30,22 @@ export const run = internalAction({
 		const tools = buildModelView(plan.tools);
 		const hitlToolNames = new Set(plan.approvalTools);
 
+		// Per-turn correlation id + the event-emit closure (G2.1): decode emits the turn's events; this
+		// closure stamps the request's stream-key fan-out fields (instanceId/submissionId/session) onto each
+		// before writing through internal.events.append.append.
+		const turnId = `${requestId}:${stepNumber}`;
+		const emit = async (event: Parameters<NonNullable<DecodeDeps["emit"]>>[0]): Promise<void> => {
+			await emitFromAction(ctx, {
+				...event,
+				instanceId: plan.instanceId,
+				submissionId: plan.submissionId,
+				session: plan.sessionName,
+			});
+		};
+
 		const deps: DecodeDeps = {
 			hitlToolNames,
+			emit,
 			loadStep: async () => {
 				const row = await ctx.runQuery(internal.engine.steps.byRequestStep, { requestId, stepNumber });
 				if (!row) return null;
@@ -70,7 +85,7 @@ export const run = internalAction({
 		};
 
 		return runDecode(
-			{ handle, systemPrompt: plan.systemPrompt, messages, tools },
+			{ handle, systemPrompt: plan.systemPrompt, messages, tools, turnId },
 			deps,
 		);
 	},
