@@ -52,7 +52,7 @@ export interface CoveConfig {
  * configuration unchanged.
  *
  * ```ts
- * import { defineCoveConfig } from "cove/cli";
+ * import { defineCoveConfig } from "@cove-framework/cove/cli";
  *
  * export default defineCoveConfig({ convexDir: "convex" });
  * ```
