@@ -21,6 +21,34 @@ export type {
 } from "./context.ts";
 export { defineTool } from "./tool.ts";
 export {
+	defineToolRegistry,
+	getRegisteredTool,
+	listRegisteredTools,
+	registerToolRegistry,
+	resetToolRegistryForTests,
+} from "./tool-registry.ts";
+export type { ToolManifestEntry, ToolRegistry } from "./tool-registry.ts";
+export {
+	defineExtensionRegistry,
+	getRegisteredExtension,
+	listRegisteredExtensions,
+	registerExtensionRegistry,
+	resetExtensionRegistryForTests,
+} from "./extensions/registry.ts";
+export type { ExtensionRegistry } from "./extensions/registry.ts";
+export type {
+	ContentMutationEventName,
+	ExtensionContext,
+	ExtensionEvent,
+	ExtensionEventName,
+	ExtensionFactory,
+	ExtensionHandler,
+	ExtensionManifestEntry,
+	ExtensionRegistrationAPI,
+	NotifyEventName,
+	RegistrationEventName,
+} from "./extensions/types.ts";
+export {
 	AttachmentNotAvailableError,
 	CoveError,
 	ModelNotConfiguredError,
@@ -104,6 +132,10 @@ export type {
 	ToolArgs,
 	ToolDefinition,
 	ToolParameters,
+	ToolResult,
+	ToolResultContent,
+	ToolResultContentImage,
+	ToolResultContentText,
 	WorkflowRouteHandler,
 } from "./types.ts";
 export type {

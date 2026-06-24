@@ -1,9 +1,11 @@
 // Tests for the pure compaction helpers (src/runtime/compaction.ts).
 import { describe, expect, it } from "vitest";
 import {
+	combineSummaries,
 	deriveCompactionDefaults,
 	estimateTokens,
 	prepareCompaction,
+	resolvePreviousCompaction,
 	serializeConversation,
 	shouldCompact,
 } from "../compaction.ts";
@@ -102,5 +104,45 @@ describe("serializeConversation", () => {
 		expect(text).toContain("[User]: hello");
 		expect(text).toContain("[Assistant]: hi there");
 		expect(text).toContain("[Tool result]: result data");
+	});
+});
+
+describe("resolvePreviousCompaction (incremental boundary translation)", () => {
+	it("returns undefined when there is no prior compaction", () => {
+		expect(resolvePreviousCompaction(["a", "b"], undefined)).toBeUndefined();
+	});
+
+	it("maps the prior compaction's firstKeptEntryId to its index in the rebuilt context", () => {
+		// contextEntries.map(c => c.entry?.id): [summary, kept1, kept2, ...]
+		const entryIds = ["comp1", "k1", "k2"];
+		const prev = resolvePreviousCompaction(entryIds, {
+			summary: "prior",
+			firstKeptEntryId: "k1",
+			details: { readFiles: ["a"], modifiedFiles: [] },
+		});
+		expect(prev).toEqual({
+			summary: "prior",
+			firstKeptIndex: 1,
+			details: { readFiles: ["a"], modifiedFiles: [] },
+		});
+	});
+
+	it("returns undefined (→ summarize fresh) when the boundary is not on the current path", () => {
+		expect(
+			resolvePreviousCompaction(["comp1", "k1"], { summary: "x", firstKeptEntryId: "gone" }),
+		).toBeUndefined();
+	});
+});
+
+describe("combineSummaries (split-turn)", () => {
+	it("returns the history summary unchanged with no prefix", () => {
+		expect(combineSummaries("HISTORY", undefined)).toBe("HISTORY");
+	});
+
+	it("appends a split-turn prefix section when present", () => {
+		const out = combineSummaries("HISTORY", "PREFIX");
+		expect(out).toContain("HISTORY");
+		expect(out).toContain("Turn Context (split turn)");
+		expect(out).toContain("PREFIX");
 	});
 });

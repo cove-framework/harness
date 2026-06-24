@@ -37,11 +37,12 @@ import { v } from "convex/values";
  * a flue `entryId`/`submissionId`, the workflow component's `convexWorkflowId`).
  */
 
-// A frozen, resolved agent plan snapshotted at admission so the durable loop
-// reads only frozen state and replay never drifts (flue resolves the
-// AgentProfile at init; we freeze the resolution). Kept intentionally loose
-// (nested `v.any()`) — the portable resolver in src/runtime owns the real shape.
-const frozenPlanValidator = v.object({
+// A resolved agent run-plan snapshotted at admission so the durable loop reads
+// only frozen state and replay never drifts (flue resolves the AgentProfile at
+// init; we freeze the resolution). "runPlan" = the resolved run snapshot (was
+// `frozenPlan`). Kept intentionally loose (nested `v.any()`) — the portable
+// resolver in src/runtime owns the real shape.
+const runPlanValidator = v.object({
   model: v.optional(v.union(v.string(), v.literal(false))),
   instructions: v.optional(v.string()),
   systemPrompt: v.optional(v.string()),
@@ -69,6 +70,10 @@ const frozenPlanValidator = v.object({
   // Tool names that require human approval before dispatch (HITL gate; doc 08 §4.4). decode marks matching
   // tool calls isHitl; the loop parks on step.awaitEvent until submitApproval resolves them.
   approvalTools: v.optional(v.array(v.string())),
+  // Frozen, ordered extension manifest (pragmatic-refactor Phase 5): per active extension, its name +
+  // contributed tool names + system-prompt fragments + subscribed event names (in registration order). Data
+  // only — handler/tool closures are recovered per isolate by re-running the registration-only factory.
+  extensions: v.optional(v.array(v.any())),
 });
 
 // Full PromptUsage fidelity (doc 08 §4.7): not a token-only subset — carries cache tokens + the
@@ -121,8 +126,8 @@ export default defineSchema({
 
     // Default model identity ("<provider>/<model>") for this session.
     model: v.optional(v.string()),
-    // Frozen resolved plan (see validator above). Snapshotted at create/init.
-    plan: v.optional(frozenPlanValidator),
+    // Frozen resolved run-plan (see validator above). Snapshotted at create/init.
+    runPlan: v.optional(runPlanValidator),
 
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -145,7 +150,7 @@ export default defineSchema({
     // Monotonic insertion order — gives a stable, indexed ordered rebuild
     // independent of the tree links (and of _creationTime ties).
     position: v.number(),
-    kind: v.union(v.literal("message"), v.literal("compaction")),
+    kind: v.union(v.literal("message"), v.literal("compaction"), v.literal("custom")),
     // The full SessionEntry payload (MessageEntry | CompactionEntry), minus
     // hoisted image bytes (see imageAttachmentIds + imageChunks).
     data: v.any(),

@@ -5,6 +5,12 @@
 import { v } from "convex/values";
 import { internalMutation } from "../_generated/server";
 import type { PromptUsage } from "../../src/runtime/types.ts";
+// Side-effect: install the extension registry so bindManifest recovers agent_end hook closures (Phase 5b).
+import "../_cove/extensionResolver.ts";
+import { getRegisteredExtension } from "../../src/runtime/extensions/registry.ts";
+import { bindManifest, makeBufferedContext, runNotifyHooks } from "../../src/runtime/extensions/apply.ts";
+import type { ExtensionManifestEntry } from "../../src/runtime/extensions/types.ts";
+import { persistCustomEntries } from "../sessions/persist.ts";
 import { emitFromMutation } from "../events/emit.ts";
 import { addUsage, emptyUsage } from "./usage.ts";
 
@@ -58,6 +64,27 @@ export const run = internalMutation({
 					submissionId: request.submissionId,
 					session: session.sessionName,
 				});
+
+				// Notify hook `agent_end` (pragmatic-refactor Phase 5b): fire-and-forget at run terminal, bound
+				// from the frozen manifest. Persist any appendEntry with deterministic ids (finalize is a
+				// journaled mutation → fires once, replay-safe).
+				const manifest = (session.runPlan?.extensions ?? []) as ExtensionManifestEntry[];
+				if (manifest.length > 0) {
+					const { hooks } = await bindManifest(manifest, getRegisteredExtension);
+					if (hooks.has("agent_end")) {
+						const { ctx: notifyCtx, drain } = makeBufferedContext();
+						await runNotifyHooks(
+							hooks,
+							{ type: "agent_end", agentId: request.instanceId, status: args.status },
+							notifyCtx,
+						);
+						await persistCustomEntries(
+							ctx,
+							request.sessionId,
+							drain().map((b, i) => ({ entryId: `x-${request.submissionId}-ae-${i}`, customType: b.customType, data: b.data })),
+						);
+					}
+				}
 			}
 		}
 	},

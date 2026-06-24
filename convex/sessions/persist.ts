@@ -65,6 +65,51 @@ export async function loadSessionData(
  * on the request/step/toolCall, so a workflow replay never double-appends). Hoists image bytes into
  * content-addressed imageChunks (refCount++ for each hash this entry references) and advances the leaf.
  */
+/**
+ * Persist extension-written `custom` side-state entries (pragmatic-refactor Phase 5b `appendEntry`). Shared by
+ * the `appendCustomEntries` mutation and the engine's notify-firing sites (setup/finalize). Idempotent by the
+ * caller-supplied deterministic `entryId`; does NOT advance `leafId` (side-state, excluded from LLM context).
+ */
+export async function persistCustomEntries(
+	ctx: MutationCtx,
+	sessionId: Id<"sessions">,
+	entries: ReadonlyArray<{ entryId: string; customType: string; data?: unknown }>,
+): Promise<void> {
+	if (entries.length === 0) return;
+	const session = await ctx.db.get(sessionId);
+	if (!session) return;
+	const last = await ctx.db
+		.query("sessionEntries")
+		.withIndex("by_session_and_position", (q) => q.eq("sessionId", sessionId))
+		.order("desc")
+		.first();
+	let position = (last?.position ?? -1) + 1;
+	const now = Date.now();
+	for (const e of entries) {
+		const existing = await ctx.db
+			.query("sessionEntries")
+			.withIndex("by_session_and_entry", (q) => q.eq("sessionId", sessionId).eq("entryId", e.entryId))
+			.unique();
+		if (existing) continue; // idempotent — replay safe
+		await ctx.db.insert("sessionEntries", {
+			sessionId,
+			entryId: e.entryId,
+			parentId: session.leafId,
+			position: position++,
+			kind: "custom",
+			data: {
+				type: "custom",
+				id: e.entryId,
+				parentId: session.leafId,
+				timestamp: new Date(now).toISOString(),
+				customType: e.customType,
+				data: e.data,
+			},
+			createdAt: now,
+		});
+	}
+}
+
 export async function appendCanonicalEntry(
 	ctx: MutationCtx,
 	sessionId: Id<"sessions">,

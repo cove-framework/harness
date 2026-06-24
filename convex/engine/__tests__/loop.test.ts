@@ -13,11 +13,19 @@ const withTools = (text: string, toolCalls: ToolCallRecord[]): StepDecision => (
 	shouldCompact: false,
 });
 const call = (name: string): ToolCallRecord => ({ toolCallId: `c-${name}`, toolName: name, args: {} });
+const overflow = (): StepDecision => ({
+	finishReason: "context_overflow",
+	toolCalls: [],
+	text: "",
+	shouldCompact: false,
+	overflow: true,
+});
 
 function makeDeps(opts: { decisions: StepDecision[]; outcomes?: ResultOutcome[] }) {
 	const finalizes: FinalizeInput[] = [];
 	const dispatched: Array<{ stepNumber: number; toolCalls: ToolCallRecord[] }> = [];
 	const followUps: string[] = [];
+	const compacts: number[] = [];
 	let d = 0;
 	let o = 0;
 	const deps: RunLoopDeps = {
@@ -30,8 +38,9 @@ function makeDeps(opts: { decisions: StepDecision[]; outcomes?: ResultOutcome[] 
 		getOutcome: async () => opts.outcomes?.[o++] ?? { type: "pending" },
 		appendFollowUp: async (p) => void followUps.push(p),
 		finalize: async (f) => void finalizes.push(f),
+		compact: async (stepNumber) => void compacts.push(stepNumber),
 	};
-	return { deps, finalizes, dispatched, followUps };
+	return { deps, finalizes, dispatched, followUps, compacts };
 }
 
 const plan = (over?: Partial<LoopPlan>): LoopPlan => ({
@@ -64,6 +73,30 @@ describe("step cap (doc 08 §4.9)", () => {
 		await runAgentLoop(plan({ maxSteps: 3 }), h.deps);
 		expect(h.dispatched).toHaveLength(3);
 		expect(h.finalizes).toEqual([{ status: "failed", reason: "step_limit_exceeded" }]);
+	});
+});
+
+describe("context-overflow recovery (Phase 4b)", () => {
+	it("compacts and advances to a fresh step after overflow, then completes", async () => {
+		const h = makeDeps({ decisions: [overflow(), stop("recovered")] });
+		await runAgentLoop(plan(), h.deps);
+		expect(h.compacts).toEqual([0]); // compacted the overflow step
+		expect(h.dispatched).toHaveLength(0);
+		expect(h.finalizes).toEqual([{ status: "completed", finalText: "recovered" }]);
+	});
+
+	it("fails with context_overflow once the retry budget is exhausted", async () => {
+		const h = makeDeps({ decisions: [overflow(), overflow()] });
+		await runAgentLoop(plan({ overflowRetryBudget: 1 }), h.deps);
+		expect(h.compacts).toEqual([0]); // one retry, then the second overflow exceeds the budget
+		expect(h.finalizes).toEqual([{ status: "failed", reason: "context_overflow" }]);
+	});
+
+	it("fails immediately with a zero budget (no retry)", async () => {
+		const h = makeDeps({ decisions: [overflow()] });
+		await runAgentLoop(plan({ overflowRetryBudget: 0 }), h.deps);
+		expect(h.compacts).toEqual([]);
+		expect(h.finalizes).toEqual([{ status: "failed", reason: "context_overflow" }]);
 	});
 });
 

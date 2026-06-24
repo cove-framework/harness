@@ -5,10 +5,12 @@ import type {
 	AgentProfile,
 	AgentRuntimeConfig,
 	CreatedAgent,
+	ExtensionSpec,
 	Skill,
 	ThinkingLevel,
 	ToolDefinition,
 } from "./types.ts";
+import type { McpServerOptions, McpTransport } from "./mcp-types.ts";
 
 const VALID_THINKING_LEVELS = {
 	off: true,
@@ -28,6 +30,10 @@ const AgentProfileSchema = v.strictObject(
 		skills: v.optional(v.array(v.unknown())),
 		tools: v.optional(v.array(v.unknown())),
 		subagents: v.optional(v.array(v.unknown())),
+		// Was typed on AgentProfile but missing from the schema → strict-object reject at runtime.
+		// Now declared so it validates + auto-allowlists into AGENT_RUNTIME_FIELDS (pragmatic-refactor Phase 1).
+		mcpServers: v.optional(v.array(v.unknown())),
+		extensions: v.optional(v.array(v.unknown())),
 		thinkingLevel: v.optional(v.string()),
 		compaction: v.optional(v.union([v.literal(false), v.looseObject({})])),
 		durability: v.optional(v.looseObject({})),
@@ -95,6 +101,8 @@ export function resolveAgentProfile(options: AgentRuntimeConfig | undefined): Ag
 		skills: mergeArrays(profile?.skills, options?.skills),
 		tools: mergeArrays(profile?.tools, options?.tools),
 		subagents: mergeArrays(profile?.subagents, options?.subagents),
+		mcpServers: mergeArrays(profile?.mcpServers, options?.mcpServers),
+		extensions: mergeArrays(profile?.extensions, options?.extensions),
 		thinkingLevel: hasOwn(options, "thinkingLevel")
 			? options?.thinkingLevel
 			: profile?.thinkingLevel,
@@ -105,13 +113,15 @@ export function resolveAgentProfile(options: AgentRuntimeConfig | undefined): Ag
 
 export function extendAgentProfile(
 	profile: AgentProfile,
-	extensions: Pick<AgentProfile, "skills" | "tools" | "subagents">,
+	additions: Pick<AgentProfile, "skills" | "tools" | "subagents" | "mcpServers" | "extensions">,
 ): AgentProfile {
 	return {
 		...profile,
-		skills: mergeArrays(profile.skills, extensions.skills),
-		tools: mergeArrays(profile.tools, extensions.tools),
-		subagents: mergeArrays(profile.subagents, extensions.subagents),
+		skills: mergeArrays(profile.skills, additions.skills),
+		tools: mergeArrays(profile.tools, additions.tools),
+		subagents: mergeArrays(profile.subagents, additions.subagents),
+		mcpServers: mergeArrays(profile.mcpServers, additions.mcpServers),
+		extensions: mergeArrays(profile.extensions, additions.extensions),
 	};
 }
 
@@ -169,6 +179,8 @@ function assertAgentProfile(
 	assertTools(definition.tools, label);
 	assertSkills(definition.skills, label);
 	assertSubagents(definition.subagents, label, activeDefinitions);
+	assertMcpServers(definition.mcpServers, label);
+	assertExtensions(definition.extensions, label);
 	assertUniqueNames(definition.tools, `${label} tools`, "tool");
 	assertUniqueNames(definition.skills, `${label} skills`, "skill");
 	assertUniqueNames(definition.subagents, `${label} subagents`, "subagent");
@@ -279,6 +291,58 @@ function assertSubagents(
 			);
 		}
 		assertAgentProfile(value, `${label} subagents[${index}]`, activeDefinitions);
+	}
+}
+
+const VALID_MCP_TRANSPORTS = new Set<McpTransport>(["streamable-http", "sse"]);
+
+function assertMcpServers(
+	values: unknown[] | undefined,
+	label: string,
+): asserts values is McpServerOptions[] | undefined {
+	if (values === undefined) return;
+	const seen = new Set<string>();
+	for (const [index, value] of values.entries()) {
+		if (!value || typeof value !== "object") {
+			throw new Error(`[cove] ${label} mcpServers[${index}] must be an MCP server config object.`);
+		}
+		const server = value as Partial<McpServerOptions>;
+		assertNonEmptyString(server.name, `${label} mcpServers[${index}].name`);
+		if (typeof server.url !== "string" && !(server.url instanceof URL)) {
+			throw new Error(`[cove] ${label} mcpServers[${index}].url must be a string or URL.`);
+		}
+		if (typeof server.url === "string" && server.url.trim().length === 0) {
+			throw new Error(`[cove] ${label} mcpServers[${index}].url must be a non-empty string.`);
+		}
+		if (server.transport !== undefined && !VALID_MCP_TRANSPORTS.has(server.transport)) {
+			throw new Error(
+				`[cove] ${label} mcpServers[${index}].transport must be one of: ${[...VALID_MCP_TRANSPORTS].join(", ")}.`,
+			);
+		}
+		if (seen.has(server.name)) {
+			throw new Error(`[cove] ${label} must not contain duplicate MCP server name "${server.name}".`);
+		}
+		seen.add(server.name);
+	}
+}
+
+function assertExtensions(
+	values: unknown[] | undefined,
+	label: string,
+): asserts values is ExtensionSpec[] | undefined {
+	if (values === undefined) return;
+	const seen = new Set<string>();
+	for (const [index, value] of values.entries()) {
+		if (typeof value === "function") continue; // inline factory — anonymous, validated when loaded (Phase 5)
+		if (typeof value !== "string" || value.trim().length === 0) {
+			throw new Error(
+				`[cove] ${label} extensions[${index}] must be a registered extension name (string) or an extension factory (function).`,
+			);
+		}
+		if (seen.has(value)) {
+			throw new Error(`[cove] ${label} must not contain duplicate extension name "${value}".`);
+		}
+		seen.add(value);
 	}
 }
 

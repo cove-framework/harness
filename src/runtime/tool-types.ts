@@ -20,6 +20,32 @@ export type ToolArgs<TParams extends ToolParameters> = [TParams] extends [v.Gene
 	? v.InferOutput<TParams>
 	: Record<string, any>;
 
+/** A text block in a {@link ToolResult}. */
+export interface ToolResultContentText {
+	type: "text";
+	text: string;
+}
+/** An image block in a {@link ToolResult} (base64 `data` + `mimeType`). */
+export interface ToolResultContentImage {
+	type: "image";
+	data: string;
+	mimeType: string;
+}
+export type ToolResultContent = ToolResultContentText | ToolResultContentImage;
+
+/**
+ * Structured tool result — the opt-in richer alternative to returning a plain
+ * string from `execute`. Return this to emit images, attach non-model `details`,
+ * or flag an error. (Run termination stays reserved for framework result tools.)
+ */
+export interface ToolResult {
+	content: ToolResultContent[];
+	/** Side-channel data NOT sent to the model (logging, structured outputs). */
+	details?: unknown;
+	/** Surfaces to the model as an error tool-result so it self-corrects. */
+	isError?: boolean;
+}
+
 /**
  * Custom tool passed to createAgent(), init(), prompt(), skill(), or task().
  * Agent and init tools are available to every session call; prompt/skill/task
@@ -34,6 +60,9 @@ export interface ToolDefinition<TParams extends ToolParameters = ToolParameters>
 	description: string;
 	/** Valibot object schema or raw JSON Schema object. */
 	parameters: TParams;
-	/** Returns a string result sent back to the LLM. Thrown errors become tool errors. */
-	execute: (args: ToolArgs<TParams>, signal?: AbortSignal) => Promise<string>;
+	/**
+	 * Returns the result sent back to the LLM: a plain string, or a {@link ToolResult}
+	 * for images / error flagging / side-channel details. Thrown errors become tool errors.
+	 */
+	execute: (args: ToolArgs<TParams>, signal?: AbortSignal) => Promise<string | ToolResult>;
 }

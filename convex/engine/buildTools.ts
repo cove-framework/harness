@@ -9,10 +9,18 @@
 // Pure / V8-safe: normalizeToolDefinition (valibot, pure) + framework/result tools; no AI SDK/Convex.
 
 import { normalizeToolDefinition } from "../../src/runtime/tool.ts";
-import type { SessionEnv, ToolDefinition } from "../../src/runtime/types.ts";
+import type { SessionEnv, ToolDefinition, ToolResult } from "../../src/runtime/types.ts";
+import { applyToolCallHooks, applyToolResultHooks, type BoundHooks } from "../../src/runtime/extensions/apply.ts";
+import type { ExtensionContext } from "../../src/runtime/extensions/types.ts";
 import { createFrameworkTool } from "./frameworkTools.ts";
 import type { ResultToolBundle } from "./resultTools.ts";
-import type { EngineTool, FrozenToolDescriptor, ModelToolView } from "./types.ts";
+import type {
+	EngineToolContent,
+	EngineTool,
+	EngineToolResult,
+	FrozenToolDescriptor,
+	ModelToolView,
+} from "./types.ts";
 
 /** What dispatchTools provides so executables can be rebound from frozen descriptors. */
 export interface BuildToolsSources {
@@ -98,7 +106,7 @@ function buildExecutable(d: FrozenToolDescriptor, sources: BuildToolsSources): E
 	}
 }
 
-/** Adapt a user ToolDefinition (execute → string) to an EngineTool (execute → EngineToolResult). */
+/** Adapt a user ToolDefinition (execute → string | ToolResult) to an EngineTool (execute → EngineToolResult). */
 function userToolToEngineTool(def: ToolDefinition): EngineTool {
 	const normalized = normalizeToolDefinition(def);
 	return {
@@ -107,11 +115,115 @@ function userToolToEngineTool(def: ToolDefinition): EngineTool {
 		parameters: normalized.parameters,
 		// execute-time throws propagate to the dispatcher, which encodes them as error tool-results.
 		async execute(args, signal) {
-			const out = await normalized.execute(args as never, signal);
-			const txt = typeof out === "string" ? out : JSON.stringify(out);
-			return { content: [{ type: "text", text: txt }] };
+			return toEngineToolResult(await normalized.execute(args as never, signal));
 		},
 	};
+}
+
+/** Normalize a user tool's `string | ToolResult` return into the engine's EngineToolResult. */
+function toEngineToolResult(out: string | ToolResult): EngineToolResult {
+	if (typeof out === "string") return { content: [{ type: "text", text: out }] };
+	if (out && typeof out === "object" && Array.isArray(out.content)) {
+		return { content: out.content as EngineToolContent[], details: out.details, isError: out.isError };
+	}
+	// Unknown shape (a tool returning neither string nor ToolResult) — stringify defensively.
+	return { content: [{ type: "text", text: JSON.stringify(out) }] };
+}
+
+/**
+ * Freeze the model-facing descriptors for a profile's user tools (pragmatic-refactor Phase 3). The
+ * `execute` closure can't cross the workflow journal, so only the descriptor is frozen; dispatchTools
+ * recovers the closure by NAME from the tool registry. Pure + unit-testable: setup.ts supplies the
+ * `isRegistered` predicate (getRegisteredTool) and the already-frozen `existingNames`, and handles the
+ * I/O (warn on skipped, throw on collision). A tool not recoverable by name (e.g. defined inline inside
+ * initialize()) is reported in `skipped` rather than frozen — surfacing a tool that always errors is worse.
+ */
+export interface FreezeUserToolsResult {
+	descriptors: FrozenToolDescriptor[];
+	/** Names skipped because they are not recoverable from the tool registry. */
+	skipped: string[];
+	/** Names colliding with an already-frozen (built-in/result/etc.) tool. */
+	collisions: string[];
+}
+
+export function freezeUserToolDescriptors(
+	tools: ToolDefinition[],
+	existingNames: ReadonlySet<string>,
+	isRegistered: (name: string) => boolean,
+): FreezeUserToolsResult {
+	const descriptors: FrozenToolDescriptor[] = [];
+	const skipped: string[] = [];
+	const collisions: string[] = [];
+	const seen = new Set(existingNames);
+	for (const tool of tools) {
+		if (seen.has(tool.name)) {
+			collisions.push(tool.name);
+			continue;
+		}
+		if (!isRegistered(tool.name)) {
+			skipped.push(tool.name);
+			continue;
+		}
+		const normalized = normalizeToolDefinition(tool);
+		descriptors.push({
+			name: normalized.name,
+			description: normalized.description,
+			parameters: normalized.parameters,
+			kind: "user",
+		});
+		seen.add(normalized.name);
+	}
+	return { descriptors, skipped, collisions };
+}
+
+/** Coerce a tool_result hook's `content` patch into EngineToolContent[] (array passes through; string wraps). */
+function normalizeHookContent(content: unknown): EngineToolContent[] | undefined {
+	if (Array.isArray(content)) return content as EngineToolContent[];
+	if (typeof content === "string") return [{ type: "text", text: content }];
+	return undefined;
+}
+
+/**
+ * Wrap each executable tool with the extension `tool_call` (before execute — mutate args / block) and
+ * `tool_result` (after execute — patch content/details/isError) hooks (pragmatic-refactor Phase 5b). Returns
+ * the map unchanged when no such hooks are bound (zero overhead). The wrapped execute runs only on the live
+ * dispatch (the action is journaled), so hook effects never need to reconstruct on replay.
+ */
+export function wrapToolsWithHooks(
+	executable: Map<string, EngineTool>,
+	hooks: BoundHooks,
+	ctx: ExtensionContext,
+): Map<string, EngineTool> {
+	if (!hooks.has("tool_call") && !hooks.has("tool_result")) return executable;
+	const wrapped = new Map<string, EngineTool>();
+	for (const [name, tool] of executable) {
+		wrapped.set(name, {
+			name: tool.name,
+			description: tool.description,
+			parameters: tool.parameters,
+			isHitl: tool.isHitl,
+			async execute(args, signal) {
+				const decision = await applyToolCallHooks(hooks, name, args, ctx);
+				if (decision.blocked) {
+					const why = decision.reason ? `: ${decision.reason}` : "";
+					return { content: [{ type: "text", text: `[cove] tool "${name}" blocked by extension${why}.` }], isError: true };
+				}
+				const result = await tool.execute(decision.args, signal);
+				const patch = await applyToolResultHooks(hooks, name, {
+					content: result.content,
+					details: result.details,
+					isError: result.isError,
+				}, ctx);
+				return {
+					...result,
+					content: normalizeHookContent(patch.content) ?? result.content,
+					details: "details" in patch ? patch.details : result.details,
+					isError: typeof patch.isError === "boolean" ? patch.isError : result.isError,
+				};
+			},
+		});
+	}
+	return wrapped;
 }
 
 /** A stub tool whose execute always returns an error tool-result with the build failure message. */

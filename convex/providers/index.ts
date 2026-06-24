@@ -62,3 +62,13 @@ export {
 	zeroMetadataCaps,
 } from "./capabilities.ts";
 export type { ModelCaps } from "./capabilities.ts";
+
+export {
+	getProviderPlugin,
+	hasProviderPlugin,
+	listProviderPlugins,
+	registerProviderPlugin,
+	resetProviderPluginsForTests,
+} from "./plugin.ts";
+export type { ProviderPlugin } from "./plugin.ts";
+export { BUILTIN_PROVIDER_PLUGINS, registerBuiltInProviders } from "./builtins.ts";

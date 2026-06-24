@@ -35,6 +35,47 @@ export interface CompactionAppendInput {
 	usage?: PromptUsage;
 }
 
+/** The SessionData shape version this build reads/writes. */
+export const CURRENT_SESSION_VERSION = 6;
+
+/**
+ * Forward-only migration step: takes data at version N and returns it at N+1.
+ * Register oldest-first, keyed by the *source* version. Steps run in sequence
+ * until the data reaches {@link CURRENT_SESSION_VERSION}. There is intentionally
+ * no downgrade path.
+ *
+ * Empty today (v6 is the first shipped version); this is the seam future schema
+ * bumps land in, so `fromData` upgrades old sessions instead of rejecting them.
+ */
+type SessionMigration = (data: SessionData) => SessionData;
+const SESSION_MIGRATIONS: Record<number, SessionMigration> = {
+	// 6: (data) => ({ ...data, version: 7, /* new-field defaults */ }),
+};
+
+/**
+ * Bring persisted {@link SessionData} up to {@link CURRENT_SESSION_VERSION} by
+ * applying the registered migration chain. Throws when there is no path: an old
+ * version with no registered migration, or data newer than this build supports.
+ */
+export function migrateSessionData(data: SessionData): SessionData {
+	let current = data;
+	while (typeof current.version === "number" && current.version < CURRENT_SESSION_VERSION) {
+		const migrate = SESSION_MIGRATIONS[current.version];
+		if (!migrate) {
+			throw new Error(
+				`[cove] No migration path from session data version ${String(current.version)} to ${CURRENT_SESSION_VERSION}. Clear persisted session state created by an earlier Cove beta.`,
+			);
+		}
+		current = migrate(current);
+	}
+	if (current.version !== CURRENT_SESSION_VERSION) {
+		throw new Error(
+			`[cove] Session data version ${String(current.version)} is newer than this Cove build supports (${CURRENT_SESSION_VERSION}). Upgrade Cove.`,
+		);
+	}
+	return current;
+}
+
 export class SessionHistory {
 	private entries: SessionEntry[];
 	private byId: Map<string, SessionEntry>;
@@ -60,20 +101,20 @@ export class SessionHistory {
 
 	static fromData(data: SessionData | null): SessionHistory {
 		if (!data) return SessionHistory.empty();
-		if (data.version !== 6) {
-			throw new Error(
-				`[cove] Session data version ${String(data.version)} is unsupported. Clear persisted session state created by an earlier Cove beta.`,
-			);
-		}
+		// Forward-only migration: upgrade older persisted shapes to the current
+		// version instead of hard-rejecting on `version !== CURRENT`. Throws only
+		// when there is genuinely no path (an unknown old version with no migration,
+		// or data newer than this build supports).
+		const migrated = migrateSessionData(data);
 		if (
-			typeof data.affinityKey !== "string" ||
-			!/^aff_[0-7][0-9A-HJKMNP-TV-Z]{25}$/.test(data.affinityKey)
+			typeof migrated.affinityKey !== "string" ||
+			!/^aff_[0-7][0-9A-HJKMNP-TV-Z]{25}$/.test(migrated.affinityKey)
 		) {
 			throw new Error(
 				"[cove] Session data affinity key is malformed. Clear malformed persisted session state.",
 			);
 		}
-		return new SessionHistory(data.entries, data.leafId);
+		return new SessionHistory(migrated.entries, migrated.leafId);
 	}
 
 	getLeafId(): string | null {
@@ -247,7 +288,7 @@ export class SessionHistory {
 		updatedAt: string,
 	): SessionData {
 		return {
-			version: 6,
+			version: CURRENT_SESSION_VERSION,
 			affinityKey,
 			entries: [...this.entries],
 			leafId: this.leafId,

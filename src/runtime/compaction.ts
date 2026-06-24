@@ -387,3 +387,38 @@ export function prepareCompaction(
 		settings,
 	};
 }
+
+// ─── Incremental-compaction helpers (pragmatic-refactor Phase 4) ─────────────────
+
+/** The prior-compaction boundary {@link prepareCompaction} consumes for an incremental (UPDATE) summary. */
+export interface PreviousCompaction {
+	summary: string;
+	firstKeptIndex: number;
+	details?: { readFiles: string[]; modifiedFiles: string[] };
+}
+
+/**
+ * Translate a persisted compaction boundary (an entry id) into the numeric `firstKeptIndex` that
+ * {@link prepareCompaction} expects, computed against the SAME rebuilt context it will slice.
+ * `entryIds` is `contextEntries.map((c) => c.entry?.id)`. Returns `undefined` — meaning "summarize fresh,
+ * not incrementally" — when there is no prior compaction or its boundary is not on the current context
+ * path (e.g. the kept entry was filtered out), which avoids a `firstKeptIndex: undefined → broken slice`.
+ */
+export function resolvePreviousCompaction(
+	entryIds: ReadonlyArray<string | undefined>,
+	latest:
+		| { summary: string; firstKeptEntryId: string; details?: { readFiles: string[]; modifiedFiles: string[] } }
+		| undefined,
+): PreviousCompaction | undefined {
+	if (!latest) return undefined;
+	const firstKeptIndex = entryIds.findIndex((id) => id === latest.firstKeptEntryId);
+	if (firstKeptIndex < 0) return undefined;
+	return { summary: latest.summary, firstKeptIndex, details: latest.details };
+}
+
+/** Combine the history summary with an optional split-turn prefix summary into the stored summary body. */
+export function combineSummaries(historySummary: string, prefixSummary: string | undefined): string {
+	return prefixSummary
+		? `${historySummary}\n\n---\n**Turn Context (split turn):**\n${prefixSummary}`
+		: historySummary;
+}

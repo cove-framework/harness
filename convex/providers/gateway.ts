@@ -14,6 +14,8 @@ import type { ModelHandle } from "../../src/runtime/messages.ts";
 import { lookupCaps } from "./capabilities.ts";
 import { getApiProvider, resolveRegisteredModel } from "./registry.ts";
 import { isTestModelId, makeTestModelHandle } from "./testModel.ts";
+import { getProviderPlugin } from "./plugin.ts";
+import "./builtins.ts"; // side-effect: register the built-in ProviderPlugins in this (node) isolate
 
 /**
  * Resolve a `provider-id/model-id` specifier to a {@link ModelHandle} carrying an
@@ -122,21 +124,34 @@ function buildLanguageModel(providerId: string, modelId: string): unknown {
  */
 export function hasCredentialsFor(providerId: string): boolean {
 	const env = process.env;
-	const has = (k: string) => typeof env[k] === "string" && env[k] !== "";
+	// Plugin first (pragmatic-refactor Phase 2); the legacy per-provider switch is the fallback.
+	// The gateway credential check is OR'd in for every provider (unchanged behavior).
+	const plugin = getProviderPlugin(providerId);
+	const providerSpecific = plugin?.hasCredentials
+		? plugin.hasCredentials(env)
+		: legacyProviderCredentials(providerId, env);
+	return providerSpecific || hasGatewayCredentials();
+}
 
+/**
+ * Legacy per-provider literal credential check (NO gateway fallback — the caller ORs that in).
+ * Kept as the fallback for providers without a registered plugin; the built-in plugins encode the
+ * same checks. Returns false for unknown providers.
+ */
+function legacyProviderCredentials(providerId: string, env: Record<string, string | undefined>): boolean {
+	const has = (k: string) => typeof env[k] === "string" && env[k] !== "";
 	switch (providerId) {
 		case "anthropic":
-			return has("ANTHROPIC_API_KEY") || hasGatewayCredentials();
+			return has("ANTHROPIC_API_KEY");
 		case "openai":
-			return has("OPENAI_API_KEY") || hasGatewayCredentials();
+			return has("OPENAI_API_KEY");
 		case "google":
 			return (
 				has("GOOGLE_API_KEY") ||
 				has("GEMINI_API_KEY") ||
 				has("GOOGLE_GENERATIVE_AI_API_KEY") ||
 				// Keyless ambient ADC.
-				has("GOOGLE_APPLICATION_CREDENTIALS") ||
-				hasGatewayCredentials()
+				has("GOOGLE_APPLICATION_CREDENTIALS")
 			);
 		case "bedrock":
 		case "amazon-bedrock":
@@ -147,11 +162,10 @@ export function hasCredentialsFor(providerId: string): boolean {
 				has("AWS_ROLE_ARN") ||
 				has("AWS_WEB_IDENTITY_TOKEN_FILE") ||
 				has("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI") ||
-				has("AWS_CONTAINER_CREDENTIALS_FULL_URI") ||
-				hasGatewayCredentials()
+				has("AWS_CONTAINER_CREDENTIALS_FULL_URI")
 			);
 		default:
-			return hasGatewayCredentials();
+			return false;
 	}
 }
 

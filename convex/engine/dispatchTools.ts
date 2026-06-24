@@ -12,11 +12,23 @@ import { v } from "convex/values";
 import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { type ActionCtx, internalAction } from "../_generated/server";
-import type { SessionEnv } from "../../src/runtime/types.ts";
+import type { SessionEnv, ToolDefinition } from "../../src/runtime/types.ts";
+import { getRegisteredTool } from "../../src/runtime/tool-registry.ts";
+// Side-effect: install the tool registry so getRegisteredTool(name) recovers user-tool execute closures in
+// this isolate (pragmatic-refactor Phase 3). codegen emits this from convex/toolRegistry.ts.
+import "../_cove/toolResolver.ts";
+// Side-effect: install the extension registry so bindManifest can recover hook closures (Phase 5b).
+import "../_cove/extensionResolver.ts";
+import { getRegisteredExtension } from "../../src/runtime/extensions/registry.ts";
+import { bindManifest } from "../../src/runtime/extensions/apply.ts";
+import type { ExtensionContext } from "../../src/runtime/extensions/types.ts";
 import { emitFromAction } from "../events/emit.ts";
+
+/** Content-mutation hooks are PURE — a no-op appendEntry enforces that tool_call/tool_result don't persist. */
+const PURE_HOOK_CONTEXT: ExtensionContext = { appendEntry: () => {}, getContextUsage: () => undefined };
 import { resolveMcpTool } from "../mcp/pool.ts";
 import { localBash } from "../sandbox/localBash.ts";
-import { buildExecutableTools } from "./buildTools.ts";
+import { buildExecutableTools, wrapToolsWithHooks } from "./buildTools.ts";
 import { runDispatch } from "./dispatch.ts";
 import { createResultToolsFromJsonSchema } from "./resultTools.ts";
 import { formatTaskResult } from "./task.ts";
@@ -116,7 +128,7 @@ async function runActivateSkill(
 export const run = internalAction({
 	args: { requestId: v.id("agentRequests"), stepNumber: v.number() },
 	handler: async (ctx, { requestId, stepNumber }): Promise<void> => {
-		const plan = await ctx.runQuery(internal.engine.requests.getPlanContext, { requestId });
+		const plan = await ctx.runQuery(internal.engine.requests.getRunPlanContext, { requestId });
 		const step = await ctx.runQuery(internal.engine.steps.byRequestStep, { requestId, stepNumber });
 		// Skip calls that already have a result — HITL-rejected calls (result pre-written by applyApproval)
 		// and any already-dispatched call on a replay (idempotency).
@@ -167,12 +179,33 @@ export const run = internalAction({
 				plan.resultSchema !== undefined ? createResultToolsFromJsonSchema(plan.resultSchema) : undefined;
 			// mcpResolve binds kind:"mcp" descriptors to a network client per beat (G2.2); supplied only here
 			// (the "use node" action), so buildExecutableTools stays pure for llmStep's model view.
-			const executable = buildExecutableTools(plan.tools, {
+			// Recover user-tool execute closures by NAME from the tool registry (initialize-free; the closure
+			// can't cross the journal). Unresolved names stay errorTool stubs (pragmatic-refactor Phase 3).
+			const userTools = new Map<string, ToolDefinition>();
+			for (const d of plan.tools) {
+				if (d.kind !== "user") continue;
+				const def = getRegisteredTool(d.name);
+				if (def) userTools.set(d.name, def);
+			}
+			// Bind the frozen manifest's named extensions once (pragmatic-refactor Phase 5b): recovers hook
+			// closures AND extension-contributed tool closures. Extension tools are added to userTools so the
+			// frozen kind:"user" descriptors (frozen at setup) resolve to the extension's execute. Replay-safe
+			// (dispatch action is journaled; bind/hooks run only on the live execution).
+			let hooks: Awaited<ReturnType<typeof bindManifest>>["hooks"] | undefined;
+			if (plan.extensions.length > 0) {
+				const bound = await bindManifest(plan.extensions, getRegisteredExtension);
+				hooks = bound.hooks;
+				for (const [name, tool] of bound.tools) {
+					if (!userTools.has(name)) userTools.set(name, tool);
+				}
+			}
+			let executable = buildExecutableTools(plan.tools, {
 				env,
-				userTools: new Map(),
+				userTools,
 				resultBundle,
 				mcpResolve: resolveMcpTool,
 			});
+			if (hooks) executable = wrapToolsWithHooks(executable, hooks, PURE_HOOK_CONTEXT);
 			await runDispatch(otherCalls, executable, { isCancelled, appendToolResult });
 		}
 

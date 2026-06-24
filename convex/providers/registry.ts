@@ -13,6 +13,7 @@
 import type { ModelHandle } from "../../src/runtime/messages.ts";
 import { ProviderRegistrationError } from "../../src/runtime/errors.ts";
 import { type ModelCaps, lookupCaps, zeroMetadataCaps } from "./capabilities.ts";
+import { hasProviderPlugin } from "./plugin.ts";
 
 // ─── Public types ───────────────────────────────────────────────────────────
 
@@ -157,7 +158,8 @@ export function resetApiProvidersForTests(): void {
 
 // ─── Internal helpers ───────────────────────────────────────────────────────
 
-// Built-in catalog provider ids (mirror capabilities.ts top-level keys).
+// Built-in catalog provider ids (mirror capabilities.ts top-level keys). Fallback for the plugin
+// map (pragmatic-refactor Phase 2): a registered ProviderPlugin also counts as catalog membership.
 const CATALOG_PROVIDERS: Record<string, true> = {
 	anthropic: true,
 	openai: true,
@@ -165,9 +167,9 @@ const CATALOG_PROVIDERS: Record<string, true> = {
 	bedrock: true,
 };
 
-/** Whether the capability catalog knows this provider ID at all. */
+/** Whether a ProviderPlugin is registered for this id, or the built-in catalog knows it. */
 function hasCatalogProvider(providerId: string): boolean {
-	return CATALOG_PROVIDERS[providerId] === true;
+	return hasProviderPlugin(providerId) || CATALOG_PROVIDERS[providerId] === true;
 }
 
 /**

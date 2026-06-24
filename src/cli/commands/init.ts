@@ -15,6 +15,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { renderAgentResolver } from "../codegen/generate-agent-registry.ts";
+import { renderExtensionResolver } from "../codegen/generate-extension-registry.ts";
+import { renderToolResolver } from "../codegen/generate-tool-registry.ts";
 import { renderWorkflowResolver } from "../codegen/generate-workflow-registry.ts";
 import { blue, dim, note, success } from "../lib/terminal.ts";
 
@@ -47,6 +49,8 @@ export async function initProject(options: InitOptions = {}): Promise<void> {
 	// 3. Regenerate the _cove/* resolvers from the scaffolded registry (pure codegen — matches `cove build`).
 	writeFile(path.join(targetDir, "convex", "_cove", "agentResolver.ts"), renderAgentResolver("registry"));
 	writeFile(path.join(targetDir, "convex", "_cove", "workflowResolver.ts"), renderWorkflowResolver("workflows"));
+	writeFile(path.join(targetDir, "convex", "_cove", "toolResolver.ts"), renderToolResolver("tools"));
+	writeFile(path.join(targetDir, "convex", "_cove", "extensionResolver.ts"), renderExtensionResolver("extensions"));
 
 	// 4. Project scaffolding (config, env, tsconfig, gitignore, README, package.json).
 	writeScaffolding(targetDir, projectName, pkgRoot);
@@ -141,9 +145,31 @@ const WORKFLOW_REGISTRY_APPEND = `
 export const workflows = defineWorkflowRegistry({});
 `;
 
+const TOOL_REGISTRY_APPEND = `
+// ─── Your tools ──────────────────────────────────────────────────────────────
+// Register custom model-callable tools by NAME so the durable engine can recover
+// each tool's execute closure (it can't cross the workflow journal). Reference the
+// same tool objects from your agents' \`tools\` arrays. \`cove dev\` / \`cove build\`
+// read the \`tools\` export and (re)generate convex/_cove/toolResolver.ts.
+// Start empty; add tools with defineTool() from "@cove-framework/cove/runtime".
+export const tools = defineToolRegistry({});
+`;
+
+const EXTENSION_REGISTRY_APPEND = `
+// ─── Your extensions ─────────────────────────────────────────────────────────
+// Register extensions by NAME, then opt an agent in with \`extensions: ["<name>"]\`
+// (or pass an inline factory). An extension factory wires registrations + hooks
+// against the registration API — keep it pure (no IO/network); it re-runs per
+// isolate. \`cove dev\` / \`cove build\` read the \`extensions\` export and (re)generate
+// convex/_cove/extensionResolver.ts. Start empty.
+export const extensions = defineExtensionRegistry({});
+`;
+
 function appendStarterRegistries(targetDir: string): void {
 	fs.appendFileSync(path.join(targetDir, "convex", "agentRegistry.ts"), AGENT_REGISTRY_APPEND);
 	fs.appendFileSync(path.join(targetDir, "convex", "workflowRegistry.ts"), WORKFLOW_REGISTRY_APPEND);
+	fs.appendFileSync(path.join(targetDir, "convex", "toolRegistry.ts"), TOOL_REGISTRY_APPEND);
+	fs.appendFileSync(path.join(targetDir, "convex", "extensionRegistry.ts"), EXTENSION_REGISTRY_APPEND);
 }
 
 // ─── Scaffolding files ────────────────────────────────────────────────────────

@@ -23,8 +23,12 @@ import {
 } from "../../src/runtime/compaction.ts";
 import type { CoveEventInput, PromptUsage } from "../../src/runtime/types.ts";
 import { DeltaBatcher, type DeltaBatcherOptions, type DeltaPatch } from "./deltaBatcher.ts";
+import { isContextOverflow } from "./retry.ts";
 import type { ModelToolView, StepDecision, ToolCallRecord } from "./types.ts";
 import { type AiSdkUsage, usageFromAiSdk } from "./usage.ts";
+
+/** finishReason marker for a step the provider rejected for context overflow (pragmatic-refactor Phase 4b). */
+export const CONTEXT_OVERFLOW_FINISH_REASON = "context_overflow";
 
 /** llmStep stream deadline (doc 08 §4.2): force-finalize the partial rather than let the action be killed. */
 export const STREAM_DEADLINE_MS = 240_000;
@@ -68,6 +72,13 @@ export interface DecodeDeps {
 	patch(patch: DeltaPatch): Promise<void>;
 	/** Persist the finalized step (toolCalls/usage/responseMessages, isFinalized:true). */
 	finalizeStep(step: FinalizedStep): Promise<void>;
+	/**
+	 * Mark the step finalized as a context-overflow (pragmatic-refactor Phase 4b) WITHOUT appending an
+	 * assistant entry to the session tree — so the retry's compacted history isn't polluted by an empty turn,
+	 * and a replay reconstructs `overflow:true` from the row's finishReason. Absent ⇒ overflow errors throw
+	 * (the pre-Phase-4b behavior). Wired only by the production llmStep action.
+	 */
+	finalizeOverflow?(durationMs: number): Promise<void>;
 	now?: () => number;
 	batchOptions?: DeltaBatcherOptions;
 	/** Force-finalize deadline (ms); default {@link STREAM_DEADLINE_MS}. */
@@ -201,7 +212,17 @@ export async function runDecode(input: DecodeInput, deps: DecodeDeps): Promise<S
 	}
 
 	await batcher.flush();
-	if (streamError) throw toError(streamError);
+	if (streamError) {
+		// Context-overflow recovery (pragmatic-refactor Phase 4b): when compaction is configured and the
+		// provider rejected the request for exceeding the window, mark the step as overflow (no session entry)
+		// and signal the loop to compact + retry on a fresh step — instead of throwing (which would just retry
+		// the same oversized request). Any other error still throws.
+		if (deps.finalizeOverflow && deps.compaction && isContextOverflow(streamError)) {
+			await deps.finalizeOverflow(now() - start);
+			return { finishReason: CONTEXT_OVERFLOW_FINISH_REASON, toolCalls: [], text: "", shouldCompact: false, overflow: true };
+		}
+		throw toError(streamError);
+	}
 
 	let responseMessages: ResponseMessageRecord[];
 	if (forced) {
@@ -291,6 +312,11 @@ function compactionDecision(deps: DecodeDeps, usage: PromptUsage | undefined): b
 
 /** Reconstruct the step decision from a finalized row — the replay path (no model call). */
 export function reconstructDecision(existing: ExistingStep, deps: DecodeDeps): StepDecision {
+	// A finalized overflow row reconstructs overflow:true so the loop re-takes the compact-and-retry branch
+	// deterministically on replay (pragmatic-refactor Phase 4b).
+	if (existing.finishReason === CONTEXT_OVERFLOW_FINISH_REASON) {
+		return { finishReason: CONTEXT_OVERFLOW_FINISH_REASON, toolCalls: [], text: "", shouldCompact: false, overflow: true };
+	}
 	return {
 		finishReason: existing.finishReason ?? "stop",
 		toolCalls: existing.toolCalls ?? [],

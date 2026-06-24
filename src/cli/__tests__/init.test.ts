@@ -7,6 +7,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderAgentResolver } from "../codegen/generate-agent-registry.ts";
+import { renderExtensionResolver } from "../codegen/generate-extension-registry.ts";
+import { renderToolResolver } from "../codegen/generate-tool-registry.ts";
 import { renderWorkflowResolver } from "../codegen/generate-workflow-registry.ts";
 import { initProject } from "../commands/init.ts";
 
@@ -60,9 +62,13 @@ describe("cove init", () => {
 		await initProject({ dir });
 		expect(read("convex/_cove/agentResolver.ts")).toBe(renderAgentResolver("registry"));
 		expect(read("convex/_cove/workflowResolver.ts")).toBe(renderWorkflowResolver("workflows"));
+		expect(read("convex/_cove/toolResolver.ts")).toBe(renderToolResolver("tools"));
+		expect(read("convex/_cove/extensionResolver.ts")).toBe(renderExtensionResolver("extensions"));
 		// The appended exports the resolvers import against.
 		expect(read("convex/agentRegistry.ts")).toContain("export const registry = defineAgentRegistry(");
 		expect(read("convex/workflowRegistry.ts")).toContain("export const workflows = defineWorkflowRegistry({})");
+		expect(read("convex/toolRegistry.ts")).toContain("export const tools = defineToolRegistry({})");
+		expect(read("convex/extensionRegistry.ts")).toContain("export const extensions = defineExtensionRegistry({})");
 	});
 
 	it("writes a project package.json depending on cove + the backend deps", async () => {

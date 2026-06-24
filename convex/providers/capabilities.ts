@@ -8,6 +8,7 @@
 // (gateway.ts) hydrates a `ModelHandle` from these; registrations (registry.ts) layer over them.
 
 import type { ThinkingLevel } from "../../src/runtime/messages.ts";
+import { getProviderPlugin } from "./plugin.ts";
 
 /**
  * The thinking levels cove understands, ordered least→most. Mirrors pi's
@@ -213,5 +214,7 @@ export function zeroMetadataCaps(): ModelCaps {
  * the id as unknown (registry, where a registration already established the id).
  */
 export function lookupCaps(providerId: string, modelId: string): ModelCaps | undefined {
-	return CAPABILITIES[providerId]?.[modelId];
+	// Plugin first (pragmatic-refactor Phase 2); CAPABILITIES is the built-in fallback. Built-in
+	// plugins read the same table, so results are identical for catalog providers.
+	return getProviderPlugin(providerId)?.caps(modelId) ?? CAPABILITIES[providerId]?.[modelId];
 }

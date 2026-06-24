@@ -11,7 +11,9 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import * as path from "node:path";
 import { generateAgentResolver } from "../codegen/generate-agent-registry.ts";
+import { generateExtensionResolver } from "../codegen/generate-extension-registry.ts";
 import { generateHttpEntry } from "../codegen/generate-http-entry.ts";
+import { generateToolResolver } from "../codegen/generate-tool-registry.ts";
 import { generateWorkflowResolver } from "../codegen/generate-workflow-registry.ts";
 import {
 	loadAgentRegistry,
@@ -80,6 +82,18 @@ export async function build(options: BuildOptions = {}): Promise<BuildResult> {
 	});
 	anyChanged ||= workflowResolver.changed;
 	note("generated", workflowResolver.path, workflowResolver.changed);
+
+	// Tool registry resolver (pragmatic-refactor Phase 3): by convention the registry is the `tools` export
+	// of convex/toolRegistry.ts. Always emitted so setup.ts/dispatchTools.ts can side-effect-import it.
+	const toolResolver = generateToolResolver({ convexDir: cfg.convexDir, exportName: "tools" });
+	anyChanged ||= toolResolver.changed;
+	note("generated", toolResolver.path, toolResolver.changed);
+
+	// Extension registry resolver (pragmatic-refactor Phase 5): by convention the registry is the
+	// `extensions` export of convex/extensionRegistry.ts. Always emitted so setup.ts can side-effect-import it.
+	const extensionResolver = generateExtensionResolver({ convexDir: cfg.convexDir, exportName: "extensions" });
+	anyChanged ||= extensionResolver.changed;
+	note("generated", extensionResolver.path, extensionResolver.changed);
 
 	const httpEntry = generateHttpEntry({ convexDir: cfg.convexDir });
 	anyChanged ||= httpEntry.changed;

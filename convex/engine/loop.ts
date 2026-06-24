@@ -19,6 +19,9 @@ import { buildResultFollowUpPrompt } from "./resultTools.ts";
 import type { ResultOutcome } from "./resultTools.ts";
 import type { StepDecision, ToolCallRecord } from "./types.ts";
 
+/** Default context-overflow retry budget (pragmatic-refactor Phase 4b): pi-style "retry once after compaction". */
+export const DEFAULT_OVERFLOW_RETRY_BUDGET = 1;
+
 export interface LoopPlan {
 	/** Defense-in-depth step ceiling (doc 08 §4.9, default 100). */
 	maxSteps: number;
@@ -26,6 +29,12 @@ export interface LoopPlan {
 	maxFollowUps: number;
 	/** Whether the run declares an output schema (result-shaped run). */
 	hasResultSchema: boolean;
+	/**
+	 * Context-overflow compact-and-retry budget (pragmatic-refactor Phase 4b). The CONSUMED count is tracked
+	 * loop-locally (reconstructed deterministically on replay, like followUps); this is the ceiling. Defaults
+	 * to {@link DEFAULT_OVERFLOW_RETRY_BUDGET} when omitted.
+	 */
+	overflowRetryBudget?: number;
 }
 
 export interface FinalizeInput {
@@ -64,9 +73,26 @@ export interface RunLoopDeps {
 export async function runAgentLoop(plan: LoopPlan, deps: RunLoopDeps): Promise<void> {
 	let stepNumber = 0;
 	let followUps = 0;
+	let overflowRetries = 0;
+	const overflowRetryBudget = plan.overflowRetryBudget ?? DEFAULT_OVERFLOW_RETRY_BUDGET;
 
 	while (stepNumber < plan.maxSteps) {
 		const decision = await deps.decode(stepNumber);
+
+		// Context-overflow recovery (pragmatic-refactor Phase 4b): the provider rejected the oversized request
+		// (decode marked an overflow step — no session entry was appended). Compact, then advance to a FRESH
+		// step that re-decodes the compacted history. The consumed count is loop-local (deterministic on
+		// replay). Budget exhausted (or no compaction) → fail observably rather than loop.
+		if (decision.overflow) {
+			if (deps.compact && overflowRetries < overflowRetryBudget) {
+				await deps.compact(stepNumber);
+				overflowRetries++;
+				stepNumber++;
+				continue;
+			}
+			await deps.finalize({ status: "failed", reason: "context_overflow" });
+			return;
+		}
 
 		if (decision.toolCalls.length === 0) {
 			// No tool calls this step. A free-form run is done; a result-schema run that stopped without

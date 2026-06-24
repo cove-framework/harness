@@ -11,6 +11,7 @@ import type { AgentMessage } from "../../src/runtime/messages.ts";
 import { stepToAssistantMessage } from "./entries.ts";
 import { computeResultOutcome } from "./resultTools.ts";
 import type { ToolResultRecord } from "./types.ts";
+import { emptyUsage } from "./usage.ts";
 import { appendCanonicalEntry } from "../sessions/persist.ts";
 
 const toolCallValidator = v.object({
@@ -145,6 +146,40 @@ export const finalizeStep = internalMutation({
 			assistant,
 			Date.now(),
 		);
+	},
+});
+
+/**
+ * Mark a step finalized as a context-overflow (pragmatic-refactor Phase 4b). Unlike finalizeStep, this does
+ * NOT append a canonical assistant entry — the overflow turn must not pollute the session tree (the retry
+ * decodes the compacted history cleanly). The finishReason marker lets a replay reconstruct overflow:true.
+ */
+export const finalizeOverflowStep = internalMutation({
+	args: {
+		requestId: v.id("agentRequests"),
+		stepNumber: v.number(),
+		durationMs: v.number(),
+	},
+	handler: async (ctx, args) => {
+		const row = await ctx.db
+			.query("agentRequestSteps")
+			.withIndex("by_request_and_step", (q) =>
+				q.eq("requestId", args.requestId).eq("stepNumber", args.stepNumber),
+			)
+			.unique();
+		if (!row) return;
+		await ctx.db.patch(row._id, {
+			isFinalized: true,
+			finishReason: "context_overflow",
+			text: "",
+			reasoning: "",
+			toolCalls: [],
+			responseMessages: [],
+			usage: emptyUsage(),
+			model: "",
+			durationMs: args.durationMs,
+			updatedAt: Date.now(),
+		});
 	},
 });
 

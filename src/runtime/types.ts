@@ -12,7 +12,15 @@ import type {
 import type { ToolDefinition } from "./tool-types.ts";
 import type { McpServerOptions } from "./mcp-types.ts";
 
-export type { ToolArgs, ToolDefinition, ToolParameters } from "./tool-types.ts";
+export type {
+	ToolArgs,
+	ToolDefinition,
+	ToolParameters,
+	ToolResult,
+	ToolResultContent,
+	ToolResultContentImage,
+	ToolResultContentText,
+} from "./tool-types.ts";
 export type { ThinkingLevel } from "./messages.ts";
 
 /**
@@ -287,6 +295,14 @@ export type ModelConfig = string | false;
 // ─── Agent Profile and Runtime Creation ─────────────────────────────────────
 
 /** Reusable agent behavior accepted by {@link defineAgentProfile}. */
+
+/** The extension factory contract lives in the extension subsystem (pragmatic-refactor Phase 5). */
+import type { ExtensionFactory } from "./extensions/types.ts";
+export type { ExtensionFactory };
+
+/** An extension reference: a registered extension name, or an inline {@link ExtensionFactory}. */
+export type ExtensionSpec = string | ExtensionFactory;
+
 export interface AgentProfile {
 	/** Profile name. Required when selecting this profile with `session.task()`. */
 	name?: string;
@@ -303,6 +319,8 @@ export interface AgentProfile {
 	mcpServers?: McpServerOptions[];
 	/** Named profiles available for delegated `session.task()` operations. */
 	subagents?: AgentProfile[];
+	/** Extensions (registered names or inline factories) applied to sessions initialized from this profile. */
+	extensions?: ExtensionSpec[];
 	/** Default reasoning effort. Individual operations may override this value. */
 	thinkingLevel?: ThinkingLevel;
 	/**
@@ -335,6 +353,8 @@ export interface AgentRuntimeConfig {
 	mcpServers?: McpServerOptions[];
 	/** Additional named profiles available for delegated `session.task()` operations. */
 	subagents?: AgentProfile[];
+	/** Additional extensions (registered names or inline factories) applied to initialized sessions. */
+	extensions?: ExtensionSpec[];
 	/** Default reasoning effort. Individual operations may override this value. */
 	thinkingLevel?: ThinkingLevel;
 	/** Automatic conversation-compaction configuration. */
@@ -556,7 +576,13 @@ export interface PromptResultResponse<T> {
 // ─── Session Store ──────────────────────────────────────────────────────────
 
 export interface SessionData {
-	version: 6;
+	/**
+	 * Persisted-shape version. Current shape is {@link CURRENT_SESSION_VERSION};
+	 * older values are upgraded by the forward-only `migrateSessionData` seam
+	 * (session-history.ts) on read. Kept `number` (not a literal) so migrations
+	 * can address prior versions.
+	 */
+	version: number;
 	/** Opaque stable provider-facing identity used for prompt caching and routing affinity. */
 	affinityKey: string;
 	entries: SessionEntry[];
@@ -580,7 +606,19 @@ export interface TaskSessionRef {
 	taskId: string;
 }
 
-export type SessionEntry = MessageEntry | CompactionEntry;
+/**
+ * An extension-written side-state entry (pragmatic-refactor Phase 5b `appendEntry`). NOT sent to the LLM —
+ * `buildContextEntries` only emits `message` entries, so a `custom` entry is recorded for querying/provenance
+ * but never enters the model context.
+ */
+export interface CustomEntry extends SessionEntryBase {
+	type: "custom";
+	/** Extension-defined sub-type (e.g. "audit-log"). */
+	customType: string;
+	data?: unknown;
+}
+
+export type SessionEntry = MessageEntry | CompactionEntry | CustomEntry;
 
 interface SessionEntryBase {
 	type: string;

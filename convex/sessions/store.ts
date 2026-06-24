@@ -14,6 +14,7 @@ import {
 	cascadeDeleteSession,
 	generateAffinityKey,
 	loadSessionData,
+	persistCustomEntries,
 } from "./persist.ts";
 
 /** Load a hydrated SessionData v6 (the llmStep context source). */
@@ -129,6 +130,8 @@ export const appendCompactionEntry = internalMutation({
 		firstKeptEntryId: v.string(),
 		tokensBefore: v.number(),
 		details: v.optional(v.any()),
+		// Summed summarization-call usage (pragmatic-refactor Phase 4); stored on the entry for cost accounting.
+		usage: v.optional(v.any()),
 	},
 	handler: async (ctx, args): Promise<{ entryId: string }> => {
 		const session = await ctx.db.get(args.sessionId);
@@ -167,6 +170,7 @@ export const appendCompactionEntry = internalMutation({
 			firstKeptEntryId: args.firstKeptEntryId,
 			tokensBefore: args.tokensBefore,
 			details: args.details,
+			usage: args.usage,
 		};
 		await ctx.db.insert("sessionEntries", {
 			sessionId: args.sessionId,
@@ -179,6 +183,21 @@ export const appendCompactionEntry = internalMutation({
 		});
 		await ctx.db.patch(args.sessionId, { leafId: entryId, updatedAt: now });
 		return { entryId };
+	},
+});
+
+/**
+ * Append extension-written `custom` side-state entries (pragmatic-refactor Phase 5b `appendEntry`). Idempotent
+ * by the caller-supplied deterministic `entryId` (replay-safe). Does NOT advance `leafId` — custom entries are
+ * side-state, never part of the message path, and excluded from the LLM context by buildContextEntries.
+ */
+export const appendCustomEntries = internalMutation({
+	args: {
+		sessionId: v.id("sessions"),
+		entries: v.array(v.object({ entryId: v.string(), customType: v.string(), data: v.optional(v.any()) })),
+	},
+	handler: async (ctx, args) => {
+		await persistCustomEntries(ctx, args.sessionId, args.entries);
 	},
 });
 

@@ -8,7 +8,7 @@ import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import { ResultUnavailableError } from "../../src/runtime/errors.ts";
 import { approvalEventName } from "./approvals.ts";
-import { runAgentLoop } from "./loop.ts";
+import { DEFAULT_OVERFLOW_RETRY_BUDGET, runAgentLoop } from "./loop.ts";
 import { workflow } from "../workflow.ts";
 
 export const agentRun = workflow.define({
@@ -30,6 +30,7 @@ export const agentRun = workflow.define({
 					maxSteps: plan.maxSteps,
 					maxFollowUps: plan.maxFollowUps,
 					hasResultSchema: plan.hasResultSchema,
+					overflowRetryBudget: DEFAULT_OVERFLOW_RETRY_BUDGET,
 				},
 				{
 					decode: (stepNumber) =>

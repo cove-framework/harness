@@ -1,4 +1,3 @@
-"use node";
 // Ported from pi · @earendil-works/pi-ai · packages/ai/src/providers/simple-options.ts
 //   (adjustMaxTokensForThinking, clampReasoning — VERBATIM math) → @cove/runtime
 // Mirrors pi · @earendil-works/pi-ai · packages/ai/src/models.ts
@@ -6,12 +5,13 @@
 // Provider-option shapes reference pi · packages/ai/src/providers/{anthropic,openai-responses,google}.ts
 //   (intent only — emits AI SDK providerOptions key names, NOT raw provider-SDK shapes).
 //
-// Note: this file imports nothing from the AI SDK at runtime — `LanguageModelV2`/`ModelMessage` are
-// never referenced — but it lives behind the "use node" boundary because the barrel pulls it into
-// the node module. The directive is harmless and keeps the boundary explicit.
+// V8-safe: imports nothing from the AI SDK (only the option-KEY names are emitted, not provider-SDK
+// shapes), so this is reachable from the V8 isolate too. ProviderPlugin.buildProviderOptions
+// (plugin.ts) is built on these pure helpers (pragmatic-refactor Phase 2).
 
 import type { ModelHandle, ThinkingLevel } from "../../src/runtime/messages.ts";
 import { EXTENDED_THINKING_LEVELS } from "./capabilities.ts";
+import { getProviderPlugin } from "./plugin.ts";
 
 /** Per-level thinking-token budgets (pi's `ThinkingBudgets`). */
 export type ThinkingBudgets = Partial<Record<Exclude<ThinkingLevel, "off" | "xhigh">, number>>;
@@ -132,6 +132,24 @@ function isAnthropicFamily(provider: string): boolean {
  *   includeThoughts:true }`; `off` → `{ thinkingBudget: 0 }`.
  */
 export function buildProviderOptions(
+	handle: ModelHandle,
+	level: ThinkingLevel,
+	opts: BuildProviderOptionsOpts = {},
+): BuiltProviderOptions {
+	// Plugin first (pragmatic-refactor Phase 2); the built-in family logic below is the fallback for
+	// isolates/providers without a registered plugin. Built-in plugins delegate back to it, so results
+	// are identical either way.
+	const plugin = getProviderPlugin(handle.provider);
+	if (plugin?.buildProviderOptions) return plugin.buildProviderOptions(handle, level, opts);
+	return buildBuiltinProviderOptions(handle, level, opts);
+}
+
+/**
+ * The built-in provider-family option logic (anthropic/bedrock, openai, google, else none). Pure;
+ * does NOT consult the plugin map (callers do). Used by both the dispatcher fallback and the
+ * built-in ProviderPlugins (builtins.ts).
+ */
+export function buildBuiltinProviderOptions(
 	handle: ModelHandle,
 	level: ThinkingLevel,
 	opts: BuildProviderOptionsOpts = {},

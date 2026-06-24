@@ -95,4 +95,10 @@ export interface StepDecision {
 	text: string;
 	/** Proactive-threshold compaction signal (compaction lands P12; false for P4). */
 	shouldCompact: boolean;
+	/**
+	 * Context-overflow signal (pragmatic-refactor Phase 4b): the provider rejected the oversized request.
+	 * The loop strips nothing (the overflow step never appends a session entry), compacts, and retries on a
+	 * fresh step. Set only when overflow was detected + classified; omitted otherwise.
+	 */
+	overflow?: boolean;
 }

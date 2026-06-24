@@ -164,3 +164,70 @@ describe("tool-call decode", () => {
 		expect(dec.toolCalls).toMatchObject([{ toolCallId: "t1", toolName: "read", args: { path: "/a" } }]);
 	});
 });
+
+describe("context-overflow recovery (Phase 4b)", () => {
+	const COMPACTION = {
+		settings: { enabled: true, reserveTokens: 100, keepRecentTokens: 100 },
+		contextWindow: 1000,
+	};
+	const errorStream = (message: string): LanguageModelV2StreamPart[] => [
+		{ type: "stream-start", warnings: [] },
+		{ type: "error", error: new Error(message) },
+	];
+
+	it("marks an overflow step (finalizeOverflow, not finalizeStep) and returns overflow:true", async () => {
+		const mock = makeMockLanguageModel({
+			doStream: async () => ({ stream: streamOf(errorStream("This model's maximum context length is exceeded")) }),
+		});
+		const handle = makeTestModelHandle(mock);
+		let overflowCalls = 0;
+		const h = harness({ compaction: COMPACTION, finalizeOverflow: async () => void overflowCalls++ });
+		const dec = await runDecode({ handle, messages: [{ role: "user", content: "hi" }], tools: [] }, h.deps);
+		expect(dec.overflow).toBe(true);
+		expect(dec.finishReason).toBe("context_overflow");
+		expect(overflowCalls).toBe(1);
+		expect(h.finalized.value).toBeUndefined(); // the normal finalize (which would append a session entry) is NOT called
+	});
+
+	it("a non-overflow stream error still throws", async () => {
+		const mock = makeMockLanguageModel({
+			doStream: async () => ({ stream: streamOf(errorStream("network boom")) }),
+		});
+		const handle = makeTestModelHandle(mock);
+		const h = harness({ compaction: COMPACTION, finalizeOverflow: async () => {} });
+		await expect(
+			runDecode({ handle, messages: [{ role: "user", content: "hi" }], tools: [] }, h.deps),
+		).rejects.toThrow(/network boom/);
+	});
+
+	it("throws (no overflow handling) when compaction is not configured", async () => {
+		const mock = makeMockLanguageModel({
+			doStream: async () => ({ stream: streamOf(errorStream("prompt is too long")) }),
+		});
+		const handle = makeTestModelHandle(mock);
+		const h = harness({ finalizeOverflow: async () => {} }); // no compaction
+		await expect(
+			runDecode({ handle, messages: [{ role: "user", content: "hi" }], tools: [] }, h.deps),
+		).rejects.toThrow(/prompt is too long/);
+	});
+
+	it("replays overflow:true from a finalized context_overflow row with no model call", async () => {
+		let doStreamCalls = 0;
+		const mock = makeMockLanguageModel({
+			doStream: async () => {
+				doStreamCalls++;
+				return { stream: streamOf(textStream("x")) };
+			},
+		});
+		const handle = makeTestModelHandle(mock);
+		const replay = harness({
+			loadStep: async () => ({ isFinalized: true, finishReason: "context_overflow" }),
+			insertStreaming: async () => {
+				throw new Error("replay must not insert a streaming row");
+			},
+		});
+		const dec = await runDecode({ handle, messages: [{ role: "user", content: "hi" }], tools: [] }, replay.deps);
+		expect(dec.overflow).toBe(true);
+		expect(doStreamCalls).toBe(0);
+	});
+});
