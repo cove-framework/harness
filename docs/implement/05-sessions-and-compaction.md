@@ -193,12 +193,21 @@ export interface ContextEntry {
 
 As a session grows, its context approaches the model's window. **Compaction** summarizes the older slice of the conversation into a single summary message and keeps only a recent tail — bounding context size while preserving what matters.
 
-There are two ways compaction is meant to fire:
+Compaction is **incremental**. When a prior summary already exists on the path, the engine doesn't redo everything from scratch: it carries the prior summary forward with an **UPDATE prompt** and summarizes only the **new slice** since the last cut. If the chosen cut point falls *inside* a single turn that is itself too large to keep, that turn's **prefix is summarized separately** (a "split turn") so the cut never lands mid-turn in context. The token usage of the summarization call is now persisted on the compaction entry.
+
+There are three ways compaction is meant to fire:
 
 1. **Threshold** — when estimated context tokens exceed `contextWindow - reserveTokens`, compact (no retry).
 2. **Explicit** — you (or the agent) call the `compact` action directly.
+3. **Overflow recovery** — when the provider rejects a request for exceeding the context window, the engine compacts and retries automatically (see [Overflow recovery](#overflow-recovery) below).
 
 > **Documented gap — the threshold auto-trigger is not yet wired.** The pure `shouldCompact` gate exists, and the explicit `compact` action exists, but the loop's automatic threshold trigger that calls the action when the gate fires is the **remaining wire** (P12). Today, compaction runs when you invoke the action explicitly (overflow recovery on a provider context-overflow signal still runs regardless of the `compaction` config). Note also that `session.compact()` in the SDK facade currently rejects with a `not_implemented` `CoveError` — drive the action directly (below) until P12 lands.
+
+### Overflow recovery
+
+Independent of the threshold gate, Cove guards against the provider rejecting a request for exceeding the context window. When that happens the engine does **not** just fail the run: it **compacts the session and automatically retries once on a fresh step**. If the retried request *still* overflows, the run is finalized as **failed** with reason `context_overflow`.
+
+The recovery retry budget defaults to one attempt, and this path runs even when threshold compaction is disabled (`compaction: false`) — disabling threshold compaction does not disable overflow recovery. So a single oversized turn is self-healing, but a request that can't fit even after a compaction terminates cleanly with a clear failure reason rather than looping.
 
 ### The decision is pure: `prepareCompaction`
 
@@ -284,6 +293,8 @@ It returns `{ compacted: false, reason }` (it does **not** throw) in two no-op c
 
 On success it returns `{ compacted: true, firstKeptEntryId, tokensBefore }`.
 
+> **Extensions can intervene.** An extension's `session_before_compact` hook (a content-mutation hook — see [Tools, Skills & Human-in-the-Loop — Extensions](04-tools-skills-hitl.md#extensions)) runs before a compaction commits. It can **cancel** the compaction (leaving the path untouched, a no-op) or **replace** the summary that would be produced. Use it to keep something the default summarizer would drop, or to skip compaction for a session that must retain its full history.
+
 Drive it directly (internal action — call from the engine, a `convex run`, or another action):
 
 ```bash
@@ -292,7 +303,7 @@ node node_modules/convex/bin/main.js run engine/compact:compact \
   '{ "sessionId": "<session id>", "keepRecentTokens": 8000 }'
 ```
 
-> The Convex `appendCompactionEntry` mutation persists `summary`, `firstKeptEntryId`, `tokensBefore`, and `details` — but **not** `usage`, even though the runtime `CompactionEntry` and `CompactionAppendInput` types carry an optional `usage` field. Don't expect the summarization call's token usage to round-trip through the append path.
+> The Convex `appendCompactionEntry` mutation persists `summary`, `firstKeptEntryId`, `tokensBefore`, `details`, **and** the optional `usage` — the summarization call's token usage now round-trips through the append path and is recorded on the compaction entry for cost accounting. (`appendCompactionEntry` accepts an optional `usage` argument; omit it and the field is simply absent.)
 
 ### What a `CompactionEntry` does to context
 
@@ -305,7 +316,7 @@ export interface CompactionEntry extends SessionEntryBase {
   firstKeptEntryId: string;        // must be an existing entry id, or the append throws
   tokensBefore: number;
   details?: { readFiles: string[]; modifiedFiles: string[] };
-  usage?: PromptUsage;             // optional; not persisted by the Convex append path
+  usage?: PromptUsage;             // optional; persisted by the Convex append path
 }
 ```
 
@@ -331,6 +342,7 @@ Because the boundary is recomputed from the tree on every context build (and `fi
 - Multi-turn continuity is implicit: reuse the same tuple (`getOrCreate` is idempotent on it). A different name starts a fresh tree.
 - Public surface is just `exists` (existence) and `remove` (cascade delete, refuses while a descendant is active, no-op when absent).
 - Context is built from a parent-linked entry tree via `SessionHistory.buildContextEntries()`, which sanitizes incomplete/aborted turns.
-- Compaction's decision is the pure `prepareCompaction`; the explicit `compact` action summarizes the older slice and appends a `CompactionEntry`; `buildContextEntries()` then serves `[summary + retained tail]`. The threshold auto-trigger is the documented remaining wire (P12), and `session.compact()` in the SDK still throws `not_implemented`.
+- Compaction's decision is the pure `prepareCompaction`; the explicit `compact` action summarizes the older slice and appends a `CompactionEntry` (now including the summarization `usage`); `buildContextEntries()` then serves `[summary + retained tail]`. Compaction is **incremental** — a prior summary is carried forward with an UPDATE prompt, and a too-large turn's prefix is split out. The threshold auto-trigger is the documented remaining wire (P12), and `session.compact()` in the SDK still throws `not_implemented`.
+- **Overflow recovery** is separate from the threshold: on a provider context-overflow the engine compacts and retries once, then finalizes the run as `failed` with reason `context_overflow` if it still doesn't fit. It runs even when `compaction: false`. An extension's `session_before_compact` hook can cancel or replace a compaction.
 
 Next: [Subagents & Workflows](06-subagents-and-workflows.md) for the `task:*` child sessions, or [Deployment & Operations](08-deployment-and-operations.md) for running and driving the engine.

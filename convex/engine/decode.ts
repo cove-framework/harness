@@ -9,12 +9,12 @@
 // the persisted state stays consistent because the re-run overwrites the streaming row.
 //
 // This is the pure decode core: the persistence side-effects (load/insert/patch/finalize the step row)
-// are injected as a DecodeDeps port, so it unit-tests against the in-process MockLanguageModelV2 with no
+// are injected as a DecodeDeps port, so it unit-tests against the in-process MockLanguageModelV3 with no
 // Convex runtime. The thin "use node" llmStep internalAction wires DecodeDeps to ctx mutations/queries.
 //
 // "use node": imports the AI SDK (`ai` streamText/tool/jsonSchema). Reached only from the llmStep action.
 
-import type { JSONSchema7, LanguageModelV2 } from "@ai-sdk/provider";
+import type { JSONSchema7, LanguageModelV3 } from "@ai-sdk/provider";
 import { jsonSchema, type ModelMessage, streamText, tool } from "ai";
 import type { AgentMessage, ModelHandle } from "../../src/runtime/messages.ts";
 import {
@@ -89,7 +89,7 @@ export interface DecodeDeps {
 	 * Reactive-event emitter (G2.1). Wired by llmStep to `internal.events.append.append`, pre-decorating
 	 * each event with the request's instanceId/submissionId/session. Optional so the pure decode unit
 	 * tests run without it (no events emitted). decode emits the turn's message_start/text/thinking/
-	 * tool_start/message_end/turn events off the AI SDK fullStream + the finalized step.
+	 * tool_start/message_end/turn events off the AI SDK stream + the finalized step.
 	 */
 	emit?: (event: CoveEventInput) => Promise<void>;
 	/**
@@ -150,8 +150,8 @@ export async function runDecode(input: DecodeInput, deps: DecodeDeps): Promise<S
 	const batcher = new DeltaBatcher(sink, { ...deps.batchOptions, now });
 
 	const result = streamText({
-		model: input.handle.model as LanguageModelV2,
-		system: input.systemPrompt,
+		model: input.handle.model as LanguageModelV3,
+		instructions: input.systemPrompt,
 		messages: input.messages,
 		tools: toAiTools(input.tools),
 	});
@@ -165,7 +165,7 @@ export async function runDecode(input: DecodeInput, deps: DecodeDeps): Promise<S
 	let streamError: unknown;
 	let forced = false;
 
-	for await (const part of result.fullStream) {
+	for await (const part of result.stream) {
 		switch (part.type) {
 			case "text-delta":
 				accText += part.text;

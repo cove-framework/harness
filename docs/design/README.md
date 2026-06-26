@@ -35,6 +35,12 @@ roadmap with acceptance criteria.
   wire-compatible; only the provider boundary maps to the AI SDK.
 - **New:** **HITL** (human-in-the-loop approval gate) as an additive capability,
   natural on a durable workflow via `awaitEvent`.
+- **Pragmatic refactor (landed 2026-06-24):** `frozenPlan` kept but renamed
+  `runPlan` (re-scoped to also freeze the ordered extension manifest); a pi-modeled
+  **extensions subsystem** (hooks partitioned by determinism class), a
+  **provider-plugin** layer, a live name-keyed **tool registry** (+ `ToolResult`),
+  and **incremental compaction** with overflow-then-retry. Authoritative record:
+  [`../REFACTOR-PRAGMATIC.md`](../REFACTOR-PRAGMATIC.md); the docs below reflect it.
 
 ## The stack (technology direction)
 

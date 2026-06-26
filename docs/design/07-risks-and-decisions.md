@@ -18,6 +18,7 @@ this doc links to them rather than restating.
 | D11 | Brand rename | **`Flue`/`Pi` → `Cove`** | The rewrite is its own product. Brand-prefixed types rename (`FlueContext`→`CoveContext`, `createFlueClient`→`createCoveClient`, `[flue]`→`[cove]`); generic verbs/domain types (`createAgent`, `defineTool`, `SessionData`, …) stay. Full table in [08 §1](08-conventions-and-execution-boundary.md). |
 | D12 | Deployment target | **Convex-only; Cloudflare dropped** | flue's `cloudflare/*` (13 files) + `cloudflare-model.ts` remain reference-only. No second backend abstraction to maintain. See [08 §5](08-conventions-and-execution-boundary.md). |
 | D18 | Workflow restored as a first-class construct (full parity with flue) | **`defineWorkflow` restored** | Honors locked D1 full parity. `defineWorkflow((ctx) => result)` returns a `WorkflowHandler`, restored beside `defineAgentRegistry` and **Convex-app-bound** (exported from the app/CLI surface under `convex/` — e.g. `convex/workflows/` + `convex/workflowRegistry.ts` — **not** on the `@cove/runtime` barrel). HTTP `POST /workflows/:name`; SDK `client.workflows.invoke(name, input)`. Workflow runs are a **distinct run kind** from agent runs: the `runs` table gains a `kind: 'agent' \| 'workflow'` discriminator, resolving the agentName-rekey conflation. See [02 — Architecture & Mapping](02-architecture-and-mapping.md), [05 — Public API & SDK](05-public-api-and-sdk.md), [06 P8/P8.5](06-phase-roadmap.md). |
+| D20 | Replay model & the frozen plan | **Keep journal-replay; `frozenPlan` kept, renamed `runPlan`** | Cove keeps `@convex-dev/workflow` journal-replay, so the frozen, journaled, serializable plan snapshot resolved at setup step 0 stays **mandatory** — it is the replay-determinism backbone. It is **not** dropped; it is **renamed `frozenPlan` → `runPlan`** (validator `runPlanValidator`, session field `sessions.runPlan`, query `getRunPlanContext`). `runPlan` now **also freezes the ordered extension manifest** (`runPlan.extensions`), re-bound in manifest order on replay. (The only way to drop the frozen plan would be abandoning journal-replay for checkpoint-resume — explicitly **not** recommended.) See [08 §4.12–4.13](08-conventions-and-execution-boundary.md#412-extensions--the-determinism-class-contract) and [`../REFACTOR-PRAGMATIC.md`](../REFACTOR-PRAGMATIC.md). |
 
 ### Defaulted (sensible defaults; revisit anytime)
 
@@ -145,6 +146,20 @@ Tighter delta-batching improves UX but multiplies Convex mutation cost.
 - **Mitigation:** D9 default cadence; expose it as config; monitor mutation
   volume per run.
 - **Owner:** P4.
+
+### R10 — Extension content-mutation hook purity
+A **content-mutation** extension hook (`context`, `tool_call`, `tool_result`,
+`session_before_compact`, …) that reads **live, non-frozen state** reintroduces exactly
+the non-determinism `runPlan` exists to prevent — a replay would compute a different
+rewrite than the original run and the journal would no longer reconstruct.
+- **Mitigation:** place every content-mutation hook on the **live-rebuild path** so its
+  only inputs are `(frozen plan + persisted step rows + event payload)`; enforce the
+  **purity contract** (the registration API exposes no action methods); and gate it with
+  **per-hook replay-equality tests** and **registration-order-independence tests** (a
+  re-bound manifest in the same order must produce the byte-identical rewrite). Trust
+  model v1 makes this a *determinism*, not a security, requirement (D20,
+  [08 §4.12](08-conventions-and-execution-boundary.md#412-extensions--the-determinism-class-contract)).
+- **Owner:** the extensions subsystem work ([`../REFACTOR-PRAGMATIC.md`](../REFACTOR-PRAGMATIC.md)).
 
 ## Open questions (to revisit during build)
 

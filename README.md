@@ -12,6 +12,13 @@ underneath is replaced:
 - **`@upstash/box`** is the sandbox, behind flue's existing `SandboxFactory` seam.
 - **AI SDK** (`@ai-sdk/*` gateway) replaces `pi-ai` for multi-provider LLM calls.
 
+Beyond flue parity, Cove adds an **extension system** (declarative tool / system-prompt /
+lifecycle-hook contributions, partitioned by determinism class so they stay replay-safe), a
+**provider-plugin** layer (add a provider with one registration, not four edits), a name-keyed
+**tool registry** (custom `kind:"user"` tools recovered by name across the durable journal), and
+**incremental compaction** (carries the prior summary forward + compact-and-retry on context
+overflow). See **[docs/REFACTOR-PRAGMATIC.md](./docs/REFACTOR-PRAGMATIC.md)**.
+
 See **[PLAN.md](./PLAN.md)** for the full architecture mapping, locked decisions, module
 layout, and phase roadmap.
 

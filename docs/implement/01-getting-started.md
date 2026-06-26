@@ -120,6 +120,8 @@ registerAgentRegistry(registry);
 
 > The `model` field is a `'provider-id/model-id'` string, or `false` to force every model-using call to pass a call-level `options.model`. Here we hardcode `cove-test/mock` so the agent's default model is the mock.
 
+> **Registries and codegen.** `cove init` scaffolds `convex/agentRegistry.ts` alongside `convex/toolRegistry.ts` and `convex/extensionRegistry.ts` (for declaring custom tools and extensions by name). `cove build` then codegens the matching resolvers under `convex/_cove/` — `agentResolver.ts`, `toolResolver.ts`, and `extensionResolver.ts` — which install each registry so `setup` can resolve agents, tools, and extensions by name. (`cove dev` runs the same codegen.)
+
 Redeploy so the new functions are bundled and callable:
 
 ```bash

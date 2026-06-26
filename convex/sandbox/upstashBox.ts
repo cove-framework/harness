@@ -53,7 +53,7 @@ export interface UpstashBoxData {
 /**
  * Injectable seam over the @upstash/box `Box` static class. Default = the real
  * `Box`. Tests substitute an in-memory fake so no live Upstash box or network
- * is touched. Mirrors P3's `MockLanguageModelV2` injection pattern.
+ * is touched. Mirrors P3's `MockLanguageModelV3` injection pattern.
  */
 export interface UpstashBoxClient {
 	create(config?: {

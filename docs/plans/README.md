@@ -17,6 +17,7 @@ executed without re-deriving the design.
 | --- | --- | --- |
 | **[group-1/](group-1/)** | Core framework — engine, sessions, harness, HITL, HTTP, registries, SDK, skills catalog, Slack-inbound channel, compaction | ✅ **Built + live-verified** (P0–P12 substantive cores) |
 | **group-2/** | Surface completion & production-readiness — MCP, reactive UI/`@cove/react`, CLI+codegen, channel outbound + breadth, the consolidated test suite, sample agent, observability | ◻ **Proposed** — all six detailed per-phase plans written (see [group-2/README.md](group-2/)) |
+| **[group-3/](group-3/)** | AI SDK 7 — upgrade & leverage — the v5→v7 bump (done), the Tier-0 native-leverage wins, and the Tier-1 `coveHarness` invert-expose play | 🔄 **In progress** — G3.1 bump ✅ **done & verified** (tsc 0 / 412 tests / tsup OK, branch `upgrade/ai-sdk-7`); leverage tiers G3.2/G3.3 are ◻ Proposed (see [group-3/README.md](group-3/)) |
 
 ---
 
@@ -78,6 +79,36 @@ G2.1 ─┬─▶ G2.2 ─┐
 **Hard external blocker to confirm first:** `convex-test` must install offline (gates
 G2.6 entirely). Other installs: `react`/`happy-dom` (G2.1), `@modelcontextprotocol/sdk`
 (G2.2). Live-only secrets: channel bot tokens (G2.3), provider key + box token (G2.5).
+
+---
+
+## Group 3 — AI SDK 7 — upgrade & leverage (in progress)
+
+Cove's AI-SDK surface is deliberately minimal (one `streamText`, two `generateText`, `tool()` with
+no `execute`) because Convex owns the durable loop. That minimalism makes the **v5→v7 bump cheap**
+and makes most of v7's headline features **already-native or would-conflict** rather than gaps to
+fill. The user has **decided to bump** (overriding the earlier "stay on v5" recommendation) — and
+the dependency majors are **already lifted** in [`../../package.json`](../../package.json)
+(`ai ^7.0.2`, `@ai-sdk/*@4`/`@5`), so the migration is the **active workstream**, with the leverage
+tiers as the roadmap it unlocks. Full opportunity report (12-feature matrix, 4-tier breakdown,
+GA/beta nuance, decision log) in [`group-3/README.md`](group-3/).
+
+| Phase | Title | Plan | Tier | Status |
+| --- | --- | --- | --- | --- |
+| **G3.1** | AI SDK 7 upgrade (v5→v7) | [phase-g3.1](group-3/phase-g3.1-ai-sdk-7-upgrade.md) | 2 (bump) | ✅ Done & verified (tsc 0 / 412 tests / tsup OK) |
+| **G3.2** | Native leverage (Tier 0, A–F) | [phase-g3.2](group-3/phase-g3.2-native-leverage.md) | 0 | ◻ Proposed |
+| **G3.3** | Cove as an AI-SDK harness adapter (`coveHarness`) | [phase-g3.3](group-3/phase-g3.3-harness-adapter.md) | 1 | ◻ Proposed — deferred (gated on canary) |
+
+```
+G3.1 (bump, ACTIVE) ─▶ G3.2 (native leverage; A/C/D shippable independently)
+                        └─▶ G3.3 (invert-expose; gated on harness API leaving canary)
+```
+
+**The hard v7 gate is already cleared** — Node 22+/ESM (`engines.node ">=22.18"` + `"type":"module"`)
+and Cove is already on `ModelMessage` — so G3.1 is a small, mechanical migration: two-hop codemods +
+~6 manual fix-sites + the load-bearing `LanguageModelV2→V3` spec bump. **Tier 3 is explicitly
+do-not-adopt** (`WorkflowAgent`, `ToolLoopAgent`, v7 `timeout`, `registerTelemetry`, `toolApproval`,
+`contextSchema`/`toolsContext`, `uploadSkill`) — each surrenders the Convex-owns-the-loop thesis.
 
 ---
 

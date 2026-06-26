@@ -19,10 +19,10 @@ import "./builtins.ts"; // side-effect: register the built-in ProviderPlugins in
 
 /**
  * Resolve a `provider-id/model-id` specifier to a {@link ModelHandle} carrying an
- * AI SDK `LanguageModelV2` (typed `unknown` on the handle) plus capability data.
+ * AI SDK `LanguageModelV3` (typed `unknown` on the handle) plus capability data.
  *
  * Order (mirrors flue's `resolveModel`, with the mock seam first):
- *   1. `isTestModelId` → the deterministic `MockLanguageModelV2` handle.
+ *   1. `isTestModelId` → the deterministic `MockLanguageModelV3` handle.
  *   2. `resolveRegisteredModel` → a registration wins over the built-in catalog.
  *   3. built-in capability catalog (capabilities.ts) + an AI SDK gateway model.
  *
@@ -89,10 +89,10 @@ export function resolveModel(model: ModelConfig | undefined): ModelHandle | unde
 }
 
 /**
- * Construct the AI SDK `LanguageModelV2` for a `providerId/modelId`. A custom
+ * Construct the AI SDK `LanguageModelV3` for a `providerId/modelId`. A custom
  * `registerApiProvider` factory (an `api` slug the gateway doesn't ship) wins;
  * otherwise the Vercel AI SDK gateway resolves the provider-prefixed shorthand.
- * Returned as `unknown` — only call sites (P4) cast back to `LanguageModelV2`.
+ * Returned as `unknown` — only call sites (P4) cast back to `LanguageModelV3`.
  *
  * Credential detection (design 05): the gateway reads ambient credentials at
  * call time. `hasCredentialsFor` records keyless ambient creds (Google ADC, AWS

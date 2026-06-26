@@ -4,7 +4,10 @@ A Cove run is a model loop with a tool roster. This page covers the three things
 
 1. **Built-in framework tools** — the six file/shell tools (`read`, `write`, `edit`, `bash`, `grep`, `glob`) the model can call inside any run. You don't register them; the engine bakes them in.
 2. **Skills** — host-supplied `SKILL.md` documents you import into a catalog. When the catalog has active skills, the engine synthesizes an `activate_skill` tool so the model can load a skill's full instructions on demand.
-3. **Human-in-the-loop (HITL) approvals** — mark tools as gated via `approvalTools` at submit time, then resolve parked calls with `listPending` → `submitApproval`.
+3. **Extensions** — reusable factories that contribute system-prompt fragments and tools and subscribe hooks to observe or shape the loop.
+4. **Human-in-the-loop (HITL) approvals** — mark tools as gated via `approvalTools` at submit time, then resolve parked calls with `listPending` → `submitApproval`.
+
+It also covers one custom-tool detail — the `execute` return contract — because it governs what a tool you author can hand back to the model.
 
 For *custom* tools you author in an agent definition (`ToolDefinition`), see [Defining Agents](02-defining-agents.md). For how runs are submitted and watched, see [Invoking Agents](03-invoking-agents.md).
 
@@ -41,6 +44,48 @@ These are the JSON args the model emits. Knowing the exact shapes and limits hel
 > **`edit` is strict by design.** Single-match-or-throw is what makes edits safe to replay. If your agent edits ambiguous text, instruct it to include surrounding context or pass `replaceAll: true`.
 
 Beyond these six built-ins, `setup.ts` always appends a `task` tool (`kind: "task"`, for subagent delegation — see [Subagents & Workflows](06-subagents-and-workflows.md)), conditionally appends `activate_skill` (`kind: "skill"`, only when the catalog has active skills — next section), and conditionally appends result tools (`kind: "result"`, only when the request carries a result schema — see [Invoking Agents](03-invoking-agents.md#typed-results-with-optionsresult)).
+
+---
+
+## Custom tools: the `execute` return contract (string | `ToolResult`)
+
+You author custom tools as `ToolDefinition` entries on an agent (see [Defining Agents](02-defining-agents.md) for the full shape and how to attach them). One contract detail is worth calling out here, because it shapes what your tool can hand back to the model: **`execute` returns `Promise<string | ToolResult>`.**
+
+- Return a **plain string** (the common case) — it is sent back to the model verbatim.
+- Return a **`ToolResult`** when you need more: image content, side-channel `details` the model never sees, or an explicit error flag.
+
+```ts
+export interface ToolResult {
+  content: Array<
+    | { type: "text"; text: string }
+    | { type: "image"; data: string; mimeType: string } // base64 data
+  >;
+  details?: unknown;   // side-channel: NOT sent to the model (logging / structured output)
+  isError?: boolean;   // surfaces to the model as an error tool-result so it self-corrects
+}
+```
+
+A tool that returns a rendered chart as an image plus a non-model `details` payload:
+
+```ts
+const renderChart: ToolDefinition = {
+  name: "render_chart",
+  description: "Render the given series as a PNG chart. Use when the user asks to visualize data.",
+  parameters: v.object({ series: v.array(v.number()) }),
+  async execute(args) {
+    const png = await toPngBase64(args.series); // your renderer → base64 string
+    return {
+      content: [
+        { type: "text", text: `Rendered a chart of ${args.series.length} points.` },
+        { type: "image", data: png, mimeType: "image/png" },
+      ],
+      details: { points: args.series.length },   // captured side-channel, not shown to the model
+    };
+  },
+};
+```
+
+To signal a recoverable failure without throwing, return `{ content: [...], isError: true }` — the model sees an error tool-result and can self-correct. (Returning a plain string still works exactly as before; `ToolResult` is purely opt-in. Run termination stays reserved for framework result tools — a custom tool cannot end the run.)
 
 ---
 
@@ -166,6 +211,90 @@ At runtime the model calls `activate_skill({ name: "<slug>" })`; the engine reso
 > **With an empty (or fully deactivated) catalog, there is no `activate_skill` tool and no `## Available Skills` prompt section.** Skills are entirely opt-in: nothing is loaded until you import at least one.
 
 > **Not yet wired: `session.skill()`.** The SDK facade exposes `session.skill(...)`, but in this cut it rejects with a `not_implemented` `CoveError` (deferred to P10). The catalog + `activate_skill` path described here is the supported way to use skills today; the model activates them itself during a run.
+
+---
+
+## Extensions
+
+An **extension** is a reusable bundle that augments a run without touching the agent's `instructions` or `tools` list directly. One extension can contribute system-prompt text, register tools, and subscribe **hooks** that observe or shape the loop. You author one as a **factory** — a function that receives a registration API and wires everything up:
+
+```ts
+import type { ExtensionFactory } from "../src/runtime/extensions/types.ts";
+
+const houseStyle: ExtensionFactory = (cove) => {
+  // Registration (runs once when the extension loads):
+  cove.registerSystemPromptFragment("## House style: be terse.");
+  cove.registerTool(myTool);
+
+  // Content-mutation hook (pure: return a value to mutate the input):
+  cove.on("context", (ev, ctx) => ({ messages: rewrite(ev.messages) }));
+
+  // Notify hook (fire-and-forget; observe only):
+  cove.on("turn_end", async (ev, ctx) => { ctx.appendEntry("audit", { ok: true }); });
+};
+```
+
+The factory's argument is the **registration API** — exactly `{ registerTool, registerSystemPromptFragment, on }`, nothing else. Action methods like `appendEntry` are deliberately **absent** from it; they exist only on the `ctx` passed into a *handler* (so a factory body can stay pure registration and be safely re-run per isolate).
+
+### The three hook classes
+
+Where a hook may run under durable replay determines what it's allowed to do. Hooks fall into three classes:
+
+- **registration** — run **once** when the extension loads, to collect data: `registerTool`, `registerSystemPromptFragment`, and `on("setup")`. The factory body itself is registration.
+- **content-mutation** — run during the durable step and **must be pure functions of their inputs**. Return a value to mutate the input; return nothing to leave it unchanged. These are: `context`, `before_agent_start`, `tool_call`, `tool_result`, `session_before_compact`.
+- **notify** — fire-and-forget side effects that **may be skipped on replay**. Observe only; never feed their results back into the loop. These are: `agent_start`, `agent_end`, `turn_end`.
+
+> **Which hooks fire today.** The events you can rely on in this cut are: `setup`, `context`, `before_agent_start`, `tool_call`, `tool_result`, `session_before_compact` (content-mutation), and `agent_start`, `agent_end`, `turn_end` (notify) — plus `registerTool`, `registerSystemPromptFragment`, and `appendEntry`. Other event names (`before_provider_request`, `message_end`, `turn_start`, `tool_execution_start` / `tool_execution_end`, `session_compact`, `model_select`) are **accepted by `on(...)` but not yet dispatched** — subscribing to them is harmless but does nothing yet.
+
+### What the wired hooks can do
+
+- **`context`** — return `{ messages }` to rewrite the message list the model will see.
+- **`tool_call`** — mutate the call's `args`, or **block** the call by returning `{ block: true, reason }`.
+- **`tool_result`** — patch the result's `content` or flag `isError`.
+- **`session_before_compact`** — **cancel** the compaction (a no-op) or **replace** the summary it would produce.
+
+```ts
+const guard: ExtensionFactory = (cove) => {
+  // Block a destructive shell command before it runs:
+  cove.on("tool_call", (ev) => {
+    if (ev.toolName === "bash" && String(ev.args?.command ?? "").includes("rm -rf")) {
+      return { block: true, reason: "Refusing rm -rf." };
+    }
+  });
+  // Redact secrets out of a tool result before the model sees it:
+  cove.on("tool_result", (ev) => ({ content: redact(ev.content) }));
+};
+```
+
+### Custom session entries with `appendEntry`
+
+Inside a handler, `ctx.appendEntry(customType, data?)` writes a persisted `custom` session entry. It is **state-only — NOT sent to the model** — so it's the right tool for audit trails, run metadata, or anything you want durably recorded without polluting context. `ctx.getContextUsage()` reads the frozen per-step context usage when available.
+
+### Declaring extensions on an agent
+
+Attach extensions via the `extensions` array on an agent config or profile (see [Defining Agents](02-defining-agents.md#extensions-and-mcpservers)). Each entry is either a **registered name** or an **inline factory**:
+
+```ts
+defineAgentProfile({
+  name: "writer",
+  instructions: "...",
+  extensions: ["house-style", (cove) => cove.registerSystemPromptFragment("Cite sources.")],
+});
+```
+
+To register by name, declare a map in the Convex-app-bound extension registry — `defineExtensionRegistry` lives in `convex/extensionRegistry.ts` (it mirrors `defineAgentRegistry`; it is **not** on the `@cove/runtime` barrel):
+
+```ts
+// convex/extensionRegistry.ts (scaffolded by `cove init`)
+import { defineExtensionRegistry } from "../src/runtime/extensions/registry.ts";
+
+// `cove build` reads this `extensions` export to (re)generate convex/_cove/extensionResolver.ts.
+export const extensions = defineExtensionRegistry({
+  "house-style": houseStyle,
+});
+```
+
+`cove init` scaffolds `convex/extensionRegistry.ts` alongside the agent and tool registries; `cove build` codegens `convex/_cove/extensionResolver.ts`, which installs it so `setup` can resolve a named extension. (Names declared on an agent are validated for shape at config time — string-or-factory, no duplicate names — but a name is only checked to *exist* when the registry loads it.)
 
 ---
 
@@ -329,6 +458,8 @@ For watching the run to completion (reactive query vs. HTTP `?wait=result` long-
 | `createFrameworkTool` | `convex/engine/frameworkTools.ts` | fn | `(name: string, env: SessionEnv) => EngineTool \| undefined` |
 | `FRAMEWORK_TOOL_NAMES` | `convex/engine/frameworkTools.ts` | const | `["read","write","edit","bash","grep","glob"]` |
 | `parseSkillMarkdown` | `src/runtime/skill-frontmatter.ts` | fn | `(content, { directoryName, path }) => ParsedSkillMarkdown` |
+| `defineExtensionRegistry` | `convex/extensionRegistry.ts` | fn | `(map: Record<string, ExtensionFactory>) => ExtensionRegistry` |
+| `defineToolRegistry` | `convex/toolRegistry.ts` | fn | `(map: Record<string, ToolDefinition>) => ToolRegistry` |
 | `importSkill` | `convex/skills.ts` | mutation | `{ slug, content }` → `{ slug, changed }` |
 | `listSkills` | `convex/skills.ts` | query | `{}` → `{ slug, name, description }[]` |
 | `getSkill` | `convex/skills.ts` | query | `{ name }` → full row \| `null` |

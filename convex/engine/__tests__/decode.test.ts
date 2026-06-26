@@ -1,14 +1,18 @@
-// Tests for the decode core (engine/decode.ts), driven through the in-process MockLanguageModelV2
+// Tests for the decode core (engine/decode.ts), driven through the in-process MockLanguageModelV3
 // (no live provider) so step decisions are deterministic and replay-equality is exact (doc 06 P4).
 import { describe, expect, it } from "vitest";
-import type { LanguageModelV2StreamPart } from "@ai-sdk/provider";
+import type {
+	LanguageModelV3FinishReason,
+	LanguageModelV3StreamPart,
+	LanguageModelV3Usage,
+} from "@ai-sdk/provider";
 import { makeMockLanguageModel, makeTestModelHandle } from "../../providers/testModel.ts";
 import { type DecodeDeps, type DecodeInput, type FinalizedStep, runDecode } from "../decode.ts";
 import type { DeltaPatch } from "../deltaBatcher.ts";
 import type { ModelToolView } from "../types.ts";
 
-function streamOf(parts: LanguageModelV2StreamPart[]): ReadableStream<LanguageModelV2StreamPart> {
-	return new ReadableStream<LanguageModelV2StreamPart>({
+function streamOf(parts: LanguageModelV3StreamPart[]): ReadableStream<LanguageModelV3StreamPart> {
+	return new ReadableStream<LanguageModelV3StreamPart>({
 		start(controller) {
 			for (const p of parts) controller.enqueue(p);
 			controller.close();
@@ -16,7 +20,18 @@ function streamOf(parts: LanguageModelV2StreamPart[]): ReadableStream<LanguageMo
 	});
 }
 
-function textStream(text: string, finishReason = "stop"): LanguageModelV2StreamPart[] {
+/** AI SDK v7 `finish` parts carry the nested `LanguageModelV3Usage`; build it from flat counts. */
+function mkUsage(input: number, output: number): LanguageModelV3Usage {
+	return {
+		inputTokens: { total: input, noCache: input, cacheRead: 0, cacheWrite: 0 },
+		outputTokens: { total: output, text: output, reasoning: 0 },
+	};
+}
+
+function textStream(
+	text: string,
+	finishReason: LanguageModelV3FinishReason["unified"] = "stop",
+): LanguageModelV3StreamPart[] {
 	return [
 		{ type: "stream-start", warnings: [] },
 		{ type: "text-start", id: "0" },
@@ -24,8 +39,8 @@ function textStream(text: string, finishReason = "stop"): LanguageModelV2StreamP
 		{ type: "text-end", id: "0" },
 		{
 			type: "finish",
-			finishReason: finishReason as "stop",
-			usage: { inputTokens: 4, outputTokens: 5, totalTokens: 9 },
+			finishReason: { unified: finishReason, raw: finishReason },
+			usage: mkUsage(4, 5),
 		},
 	];
 }
@@ -96,7 +111,7 @@ describe("replay guard (doc 08 §4.1)", () => {
 
 describe("delta batching throughput (doc 08 §4.6)", () => {
 	it("coalesces many small deltas into far fewer batched patches", async () => {
-		const parts: LanguageModelV2StreamPart[] = [
+		const parts: LanguageModelV3StreamPart[] = [
 			{ type: "stream-start", warnings: [] },
 			{ type: "text-start", id: "0" },
 		];
@@ -104,8 +119,8 @@ describe("delta batching throughput (doc 08 §4.6)", () => {
 		parts.push({ type: "text-end", id: "0" });
 		parts.push({
 			type: "finish",
-			finishReason: "stop",
-			usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+			finishReason: { unified: "stop", raw: "stop" },
+			usage: mkUsage(1, 1),
 		});
 
 		const mock = makeMockLanguageModel({ doStream: async () => ({ stream: streamOf(parts) }) });
@@ -140,13 +155,13 @@ describe("responseMessages round-trip (doc 04 context-rebuild parity)", () => {
 
 describe("tool-call decode", () => {
 	it("decodes a tool call (parsed args) and surfaces it on the decision", async () => {
-		const parts: LanguageModelV2StreamPart[] = [
+		const parts: LanguageModelV3StreamPart[] = [
 			{ type: "stream-start", warnings: [] },
 			{ type: "tool-call", toolCallId: "t1", toolName: "read", input: JSON.stringify({ path: "/a" }) },
 			{
 				type: "finish",
-				finishReason: "tool-calls",
-				usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+				finishReason: { unified: "tool-calls", raw: "tool-calls" },
+				usage: mkUsage(1, 1),
 			},
 		];
 		const mock = makeMockLanguageModel({ doStream: async () => ({ stream: streamOf(parts) }) });
@@ -170,7 +185,7 @@ describe("context-overflow recovery (Phase 4b)", () => {
 		settings: { enabled: true, reserveTokens: 100, keepRecentTokens: 100 },
 		contextWindow: 1000,
 	};
-	const errorStream = (message: string): LanguageModelV2StreamPart[] => [
+	const errorStream = (message: string): LanguageModelV3StreamPart[] => [
 		{ type: "stream-start", warnings: [] },
 		{ type: "error", error: new Error(message) },
 	];

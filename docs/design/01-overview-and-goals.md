@@ -111,6 +111,15 @@ The loop mechanics are in [04 — The Durable Engine](04-durable-engine.md).
   still be plugged in.
 - **G5 — Additive HITL.** A first-class approval gate that existing flue lacks,
   without breaking the existing surface.
+- **G6 — Extensible by plugin.** An in-process **extensions** subsystem lets authors
+  contribute tools, system-prompt fragments, and lifecycle handlers (via
+  `defineExtensionRegistry` or an inline profile `extensions` field), with a
+  determinism-class contract that keeps the durable loop replay-safe. See
+  [08 §4.12](08-conventions-and-execution-boundary.md#412-extensions--the-determinism-class-contract).
+- **G7 — Pluggable providers.** Provider behavior is registry-driven
+  (`ProviderPlugin` + self-registering built-ins) so new providers and capabilities
+  drop in without editing the engine — the legacy hardcoded switch stays only as a
+  fallback. See [08 §4.14](08-conventions-and-execution-boundary.md#414-provider-plugins).
 
 ## Non-goals (initially)
 

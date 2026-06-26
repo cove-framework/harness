@@ -2,6 +2,8 @@
 
 > Park an approval-gated tool call on a durable workflow event, resume on an idempotent fail-loud `submitApproval`, re-validate approver-edited args, and terminalize a long-parked run as `cancelled`. Design-of-record: [06 — Roadmap](../../design/06-phase-roadmap.md) + [04 — Durable Engine](../../design/04-durable-engine.md#hitl--the-approval-state-machine) + [08 §4.4](../../design/08-conventions-and-execution-boundary.md#44-hitl-state-machine) + [03 — Data Model](../../design/03-data-model-sor.md#approvals--hitl-new). Decisions: [D1–D19](../../design/07-risks-and-decisions.md) (esp. [D4](../../design/07-risks-and-decisions.md)).
 
+> **Naming update (pragmatic refactor).** `frozenPlan` / `frozenPlanValidator` / `plan` referenced below were later renamed `runPlan` / `runPlanValidator` / `sessions.runPlan`. The concept is unchanged. See [`../../REFACTOR-PRAGMATIC.md`](../../REFACTOR-PRAGMATIC.md).
+
 ## Goal & scope
 
 Human-in-the-loop is a **new additive capability** ([D4](../../design/07-risks-and-decisions.md)) — flue has no equivalent; it is natural on a durable workflow. This phase adds the **approval gate** between the model's decision and tool execution:

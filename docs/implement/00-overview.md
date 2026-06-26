@@ -27,7 +27,7 @@ import { createAgent } from "../runtime/index.ts"; // re-exported from src/runti
 export const researcher = createAgent((ctx) => ({
   model: "anthropic/claude-haiku-4-5",
   instructions: "You are a focused research assistant.",
-  // tools, skills, subagents, thinkingLevel, compaction, durability, cwd, sandbox ...
+  // tools, skills, subagents, extensions, mcpServers, thinkingLevel, compaction, durability, cwd, sandbox ...
 }));
 ```
 
@@ -194,8 +194,10 @@ const { requestId } = await client.mutation(api.invoke.submit.submitPrompt, {
 
 ### Define your capabilities
 
-- **Tools** — `ToolDefinition` entries (`{ name, description, parameters, execute }`); `parameters` is a valibot `v.object({...})` schema or a raw JSON Schema object, `execute` returns `Promise<string>`. Plus 6 built-in framework tools (`read`, `write`, `edit`, `bash`, `grep`, `glob`) and a built-in `task` tool — baked in automatically, not registered by you.
+- **Tools** — `ToolDefinition` entries (`{ name, description, parameters, execute }`); `parameters` is a valibot `v.object({...})` schema or a raw JSON Schema object, `execute` returns `Promise<string | ToolResult>` (a plain string, or a `ToolResult` for images / side-channel `details` / an `isError` flag). Plus 6 built-in framework tools (`read`, `write`, `edit`, `bash`, `grep`, `glob`) and a built-in `task` tool — baked in automatically, not registered by you.
 - **Skills** — a Convex-managed catalog (`convex/skills.ts`): `importSkill({ slug, content })` with SKILL.md text, `listSkills`, `getSkill`, `deactivateSkill`. The agent loads one at runtime via the synthetic `activate_skill` tool (present only when the catalog has active skills).
+- **Extensions** — a first-class, declarable surface for augmenting a run. An extension is a factory `(cove) => { ... }` that can register system-prompt fragments and tools and subscribe **hooks** (content-mutation hooks that purely shape context/tool calls/compaction, and fire-and-forget notify hooks). You declare them on an agent via the `extensions` field — by registered name (`defineExtensionRegistry` in `convex/extensionRegistry.ts`) or as an inline factory. See [Tools, Skills & Human-in-the-Loop — Extensions](04-tools-skills-hitl.md#extensions) and [Defining Agents](02-defining-agents.md#extensions-and-mcpservers).
+- **MCP servers** — mount remote MCP servers on an agent via the `mcpServers` field (or per request); their tools surface to the model as `mcp__<server>__<tool>`. See [Defining Agents](02-defining-agents.md#extensions-and-mcpservers).
 - **Human-in-the-loop** — gate tool calls by setting `request.approvalTools`; subscribe to `listPending({ requestId })` to render approval cards and resolve each with the `submitApproval` mutation.
 
 See [Tools, Skills & Human-in-the-Loop](04-tools-skills-hitl.md).

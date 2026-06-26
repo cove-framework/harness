@@ -239,6 +239,10 @@ node node_modules/convex/bin/main.js run dev:startPrompt '{"prompt":"ping"}'   #
 - **Regenerate after a clone, a dependency bump, or a schema/function change** to keep `internal.*` / `api.*` references resolving and `tsc` green. `codegen` is the minimum (bindings only); `dev --once` does it as part of a full deploy.
 - The generated `api` is also what your SDK consumers depend on. The SDK package is intentionally decoupled from `convex/_generated` — `createCoveClient(client, refs, opts)` requires you to **pass the function references yourself** via `CoveApiRefs` (the five deployed refs: `submitPrompt`, `stopActive`, `getRequest`, `sessionExists`, `deleteSession`, sourced from your app's generated `api`, e.g. `api.invoke.submit.submitPrompt`). See [Invoking Agents](03-invoking-agents.md).
 
+### Regenerating the `convex/_cove/` resolvers
+
+Separate from Convex's own `convex/_generated/`, the `cove` CLI maintains a second set of sidecar files under `convex/_cove/`. `cove build` (and `cove dev`) read your registry exports and **codegen one resolver per registry** — `agentResolver.ts`, `workflowResolver.ts`, `toolResolver.ts`, and `extensionResolver.ts` — each of which installs its registry on import (the cold-boot re-install described in [§6](#module-scoped-state-must-be-re-applied-per-cold-boot)). `cove init` scaffolds the source registries themselves (`agentRegistry.ts`, `workflowRegistry.ts`, `toolRegistry.ts`, `extensionRegistry.ts`) so a fresh project has all four. Treat `convex/_cove/` like `convex/_generated/`: derived, not source — regenerate it after adding or renaming an agent, workflow, tool, or extension.
+
 ### `.env` is never committed
 
 `.env`, `.env.local`, and all `.env.*.local` variants are in `.gitignore`. Anyone cloning the repo must supply their own. The split is by audience:
@@ -256,7 +260,7 @@ Remember that runtime secrets your **deployed** functions read (the gateway key,
 
 Some installation hooks are module-scoped and **last-write-wins**, and are **not persisted across cold boots** — the generated app entry must re-apply them on every boot:
 
-- `registerAgentRegistry(registry)` / `registerWorkflowRegistry(registry)` — install the active registries that `setup` and the `POST /workflows/:name` route resolve against.
+- `registerAgentRegistry(registry)` / `registerWorkflowRegistry(registry)` / `registerToolRegistry(registry)` / `registerExtensionRegistry(registry)` — install the active registries that `setup` (and the `POST /workflows/:name` route) resolve agents, workflows, tools, and extensions against. The codegened `convex/_cove/*Resolver.ts` files (below) do these re-installs for you.
 - `configureAuthorize(hook)` — installs the HTTP authorize hook for `/agents` and `/runs`. **With no hook installed, those routes are open (unauthenticated).** See [Invoking Agents](03-invoking-agents.md) for gating HTTP access.
 - `configureErrorRendering({ devMode })` — toggles whether `500` error details leak to clients (default redacted).
 

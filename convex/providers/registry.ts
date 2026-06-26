@@ -8,7 +8,7 @@
 //   (module-scoped, last-write-wins map).
 //
 // Pure / V8-safe: NO AI SDK import. Builds `ModelHandle` capability data hydrated from
-// capabilities.ts; the AI SDK `LanguageModelV2` is attached later by gateway.ts.
+// capabilities.ts; the AI SDK `LanguageModelV3` is attached later by gateway.ts.
 
 import type { ModelHandle } from "../../src/runtime/messages.ts";
 import { ProviderRegistrationError } from "../../src/runtime/errors.ts";
@@ -133,12 +133,12 @@ export function getRegistration(providerId: string): ProviderRegistration | unde
  * last-write-wins — re-register on every isolate boot without dedupe bookkeeping.
  *
  * In cove this records a custom AI SDK provider factory: `(modelId) =>
- * LanguageModelV2`. The factory is opaque here (`unknown`) to keep this module
+ * LanguageModelV3`. The factory is opaque here (`unknown`) to keep this module
  * AI-SDK-free; gateway.ts casts it back when resolving an `api` slug.
  */
 export interface ApiProviderRegistration {
 	api: string;
-	/** `(modelId: string) => LanguageModelV2`, typed opaque to stay AI-SDK-free. */
+	/** `(modelId: string) => LanguageModelV3`, typed opaque to stay AI-SDK-free. */
 	factory: (modelId: string) => unknown;
 }
 
@@ -175,7 +175,7 @@ function hasCatalogProvider(providerId: string): boolean {
 /**
  * Resolve `'provider-id/model-id'` against the provider registry. Returns
  * `ModelHandle` capability data (no AI SDK `model` field — gateway.ts attaches
- * the resolved `LanguageModelV2`). `undefined` when the provider ID has no
+ * the resolved `LanguageModelV3`). `undefined` when the provider ID has no
  * registration. Mirrors flue's `resolveRegisteredModel`.
  */
 export function resolveRegisteredModel(providerId: string, modelId: string): ModelHandle | undefined {

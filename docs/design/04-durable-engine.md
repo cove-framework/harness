@@ -185,6 +185,39 @@ entirely (it still carries Date + Working-directory, which are known without an 
 This extends [D13](07-risks-and-decisions.md) — both the skills registry *and* the
 directory listing are resolved off host/lazy state rather than a setup-time sandbox scan.
 
+## Extensions — load once, freeze, re-bind on replay
+
+Extensions are wired through the same freeze-then-replay discipline as the plan and the
+tools. Their execution model has three movements:
+
+1. **Load once (registration).** During `setup`, each extension factory
+   (`ExtensionFactory`) runs **once** inside the V8 setup mutation. It is *pure data
+   collection*: `registerTool`/`registerSystemPromptFragment` and the `setup` hook
+   contribute the extension's tools, prompt fragments, and the set of events it listens
+   for. The registration API exposes **no action methods**, so re-running a factory can
+   never diverge. The collected result is serialized into the **ordered extension
+   manifest** frozen onto `runPlan.extensions` (`ExtensionManifestEntry[]`).
+2. **Re-bind on replay.** Handler closures cannot cross the journal, so on each cold
+   action the engine **re-runs the named factories in manifest order** to recover their
+   `on(event, handler)` closures. Order is load-bearing — the `context` rewrite chain is
+   sequential — and inline factories are bound by manifest position; only **named**
+   extensions recover closures across isolates.
+3. **Fire by class.** **Content-mutation** hooks (`context`,
+   `before_provider_request`, `before_agent_start`, `message_end`, `tool_call`,
+   `tool_result`, `session_before_compact`) fire **behind the
+   `runDecode`/`dispatchTools`/`compact` replay guards** as **pure fns of `(frozen plan +
+   persisted step inputs + event payload)`**, so a replay re-takes the identical rewrite.
+   **Notify** hooks (`agent_start`, `agent_end`, `turn_start`/`turn_end`,
+   `tool_execution_start`/`end`, `session_compact`, `model_select`) are **fire-and-forget**
+   at any boundary, **skippable on replay**, and must never feed back into journaled
+   inputs.
+
+`appendEntry` (on `ExtensionContext`) writes a `kind:"custom"` session entry as
+extension side-state — idempotent by deterministic key, excluded from LLM context, and it
+does **not** advance the active leaf. The full class contract and the live-path-only
+purity rule are in
+[08 §4.12](08-conventions-and-execution-boundary.md#412-extensions--the-determinism-class-contract).
+
 ## `llmStep` — one decode, streamed
 
 ```ts
@@ -440,23 +473,65 @@ redeploys and can stay parked indefinitely. Exact rules in
 ## Compaction in the loop
 
 The pure helpers (token estimation, cut-point selection) port from flue's
-[`compaction.ts`](../../../flue/packages/runtime/src/compaction.ts); the
-**summarization LLM call** is a workflow step (`compact`) that appends a
+[`compaction.ts`](../../../flue/packages/runtime/src/compaction.ts) (mirrored in
+[`src/runtime/compaction.ts`](../../src/runtime/compaction.ts)); the **summarization LLM
+call** is a workflow step (`compact`, in
+[`convex/engine/compact.ts`](../../convex/engine/compact.ts)) that appends a
 `CompactionEntry` row. There are **two explicit modes** (flue's threshold vs.
 overflow), both preserved:
 
 1. **Proactive threshold.** Fired **between `llmStep`s**: when the estimated context
    tokens exceed `contextWindow - reserveTokens`, the loop compacts before the next
    decode. No retry — the next `llmStep` simply runs on the compacted history.
-2. **Reactive overflow.** When a decode fails with a context-overflow error
-   (`isContextOverflow`, ported), the loop compacts and then **retries the *same*
-   step** so the model re-decodes against the shrunken context.
+2. **Reactive overflow.** When a decode hits a context-overflow finish reason, the loop
+   compacts and re-decodes on a **fresh step** (the overflow-then-retry branch under
+   [§ Overflow-then-retry](#overflow-then-retry) below).
+
+**Incremental compaction.** Compaction no longer re-summarizes from scratch when a prior
+summary exists. `resolvePreviousCompaction(entryIds, latestCompaction)` translates the
+prior compaction's **entry-id boundary** into the numeric index `prepareCompaction(messages,
+settings, previous)` expects against the freshly-rebuilt context. With a prior summary the
+step summarizes **only the new slice** using the **UPDATE prompt** (which carries the
+`<previous-summary>`), not the whole history. **Split turn:** if the cut falls inside a
+single too-large turn, that turn's **prefix is summarized separately**; both summarization
+calls run in the **one journaled `compact` action** and their **usage is summed**.
+`appendCompactionEntry` now accepts and persists an optional `usage`, so a compaction
+step's token cost is recorded like any decode. The `session_before_compact` extension hook
+fires here (cancel = NOOP returns the step without failing the run; a `replacementSummary`
+skips the model call — [08 §4.12](08-conventions-and-execution-boundary.md#412-extensions--the-determinism-class-contract)).
 
 flue's `isRetryableModelError` is ported into `llmStep`'s error handling, so transient
 model errors retry the step without a full request failure, distinct from the
 overflow-driven compact-then-retry path above. All compaction identifiers follow Cove
 naming ([08 §1](08-conventions-and-execution-boundary.md#1-naming--namespace)); the
 copied message shapes (`CompactionEntry`, `SessionEntry`) keep their flue names.
+
+### Overflow-then-retry
+
+A decode that finishes with a **context-overflow finish reason** is handled distinctly
+from the proactive threshold path. `decode` marks an **overflow step** and appends **no
+session entry** via `finalizeOverflowStep` — so there is nothing to strip or unwind, the
+overflow step simply produced no turn. The loop then branches:
+
+```ts
+if (decision.overflow) {
+  if (compactionAvailable && overflowRetries < DEFAULT_OVERFLOW_RETRY_BUDGET) {
+    await step.runAction(internal.engine.compact.run, { requestId, stepNumber });
+    overflowRetries++;
+    stepNumber++;                 // retry runs on a FRESH step that re-decodes compacted history
+    continue;
+  }
+  // budget exhausted (or compaction disabled) → terminalize
+  await step.runMutation(internal.engine.finalize.run, { requestId, reason: "context_overflow" });
+  // request terminalizes failed / context_overflow
+}
+```
+
+`DEFAULT_OVERFLOW_RETRY_BUDGET = 1` is a **loop-local consumed count** reconstructed
+deterministically on replay, exactly like `followUps` — never re-derived from live state.
+The retry decodes against the compacted history on the **next `stepNumber`** (not a
+re-run of the overflow step). If the budget is spent (or compaction is unavailable), the
+loop `finalize`s the request **`failed` with reason `context_overflow`**.
 
 ## Why this shape
 

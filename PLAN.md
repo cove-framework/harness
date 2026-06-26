@@ -18,6 +18,15 @@ LLM decides but does not control flow.
 (naming, the reference-header convention, the execution boundary, and the hardened
 engine contracts). Every source file carries a header citing its flue/pi origin + package.
 
+> **Update (2026-06-24):** a follow-on **pragmatic refactor** has since landed on top of this
+> plan — `frozenPlan`→`runPlan` (kept as the determinism backbone, re-scoped to freeze the
+> ordered extension manifest), a pi-modeled **extensions subsystem** (hooks partitioned by
+> determinism class), a **provider-plugin** layer collapsing the four hardcoded provider
+> switches, a live name-keyed **tool registry** (+ `ToolResult`-widened `execute`), and
+> **incremental compaction** with compact-and-retry overflow recovery. The authoritative record
+> is **[docs/REFACTOR-PRAGMATIC.md](docs/REFACTOR-PRAGMATIC.md)**; the design-of-record docs
+> under [`docs/design/`](docs/design/README.md) have been updated to match.
+
 ## The stack (technology direction)
 
 | Concern | flue (today) | cove-harness (target) |

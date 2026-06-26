@@ -1,10 +1,10 @@
 // New (Convex backend) · @cove/runtime · phase-03 acceptance test for convex/providers.
-// Covers the Acceptance bar items 1–8, all driven through the MockLanguageModelV2 seam — NO live
+// Covers the Acceptance bar items 1–8, all driven through the MockLanguageModelV3 seam — NO live
 // provider. registerProvider() in setup; resetProvidersForTests() between tests.
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { generateText } from "ai";
-import type { LanguageModelV2 } from "@ai-sdk/provider";
+import type { LanguageModelV3 } from "@ai-sdk/provider";
 import { ProviderRegistrationError } from "../../../src/runtime/errors.ts";
 import type { Message } from "../../../src/runtime/messages.ts";
 import {
@@ -67,7 +67,7 @@ describe("1. capability resolution", () => {
 // ─── 2. Mock smoke (no live provider) ─────────────────────────────────────────
 
 describe("2. mock smoke", () => {
-	it("resolves the reserved test id to a MockLanguageModelV2-backed handle", () => {
+	it("resolves the reserved test id to a MockLanguageModelV3-backed handle", () => {
 		const handle = resolveModel(RESERVED_TEST_MODEL_ID);
 		expect(handle).toBeDefined();
 		expect(handle!.modelString).toBe(RESERVED_TEST_MODEL_ID);
@@ -76,13 +76,13 @@ describe("2. mock smoke", () => {
 
 	it("returns the canned text from a non-streaming generateText call", async () => {
 		const handle = resolveModel(RESERVED_TEST_MODEL_ID)!;
-		const result = await generateText({ model: handle.model as LanguageModelV2, prompt: "hello" });
+		const result = await generateText({ model: handle.model as LanguageModelV3, prompt: "hello" });
 		expect(result.text).toBe(RESERVED_TEST_MODEL_TEXT);
 	});
 
 	it("is byte-stable across resolves (replay determinism)", async () => {
-		const a = await generateText({ model: resolveModel(RESERVED_TEST_MODEL_ID)!.model as LanguageModelV2, prompt: "x" });
-		const b = await generateText({ model: resolveModel(RESERVED_TEST_MODEL_ID)!.model as LanguageModelV2, prompt: "x" });
+		const a = await generateText({ model: resolveModel(RESERVED_TEST_MODEL_ID)!.model as LanguageModelV3, prompt: "x" });
+		const b = await generateText({ model: resolveModel(RESERVED_TEST_MODEL_ID)!.model as LanguageModelV3, prompt: "x" });
 		expect(a.text).toBe(b.text);
 		expect(a.usage).toEqual(b.usage);
 	});

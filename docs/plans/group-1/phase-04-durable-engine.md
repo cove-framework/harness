@@ -2,6 +2,8 @@
 
 > Build the durable `setup → (llmStep → dispatchTools)* → finalize` workflow loop with streamed deltas, honoring every §4 hardened contract. Design-of-record: [06 — Roadmap](../../design/06-phase-roadmap.md) + [04 — Durable Engine](../../design/04-durable-engine.md) + [08 — Conventions & Execution Boundary](../../design/08-conventions-and-execution-boundary.md). Decisions: [D1–D19](../../design/07-risks-and-decisions.md).
 
+> **Naming update (pragmatic refactor).** `frozenPlan` / `frozenPlanValidator` / `sessions.plan` / `agentRequests.plan` referenced below were later renamed `runPlan` / `runPlanValidator` / `sessions.runPlan`, and the run snapshot was re-scoped to also freeze the ordered extension manifest. The concept is unchanged. See [`../../REFACTOR-PRAGMATIC.md`](../../REFACTOR-PRAGMATIC.md).
+
 ## Goal & scope
 
 Stand up the **durable agent loop** as a `@convex-dev/workflow` workflow plus the `convex/engine/` actions/mutations it journals through. The loop must:

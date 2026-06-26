@@ -1,6 +1,6 @@
 // Ported from flue · @flue/runtime · packages/runtime/src/usage.ts → @cove/runtime
 //   emptyUsage / addUsage / fromProviderUsage ported verbatim (pi `Usage` import → ../../src/runtime/messages.ts).
-//   ADDED for cove: usageFromAiSdk — bridges the Vercel AI SDK token shape (LanguageModelV2Usage) into
+//   ADDED for cove: usageFromAiSdk — bridges the Vercel AI SDK token shape (the v7 LanguageModelUsage shape) into
 //   PromptUsage and computes cost from the resolved ModelHandle rates. The provider/persisted side uses
 //   inputTokens/outputTokens; the caller-facing PromptUsage uses input/output — this module is the single
 //   bridge across that divergence (doc 08 §4.7).
@@ -77,24 +77,34 @@ export function fromProviderUsage(usage: Usage | undefined): PromptUsage | undef
 }
 
 /**
- * Structural subset of the Vercel AI SDK `LanguageModelV2Usage`, typed locally so
- * this module never imports the AI SDK. `streamText`/`generateText` resolve a
- * usage object of (at least) this shape; absent fields default to zero.
+ * Structural subset of the Vercel AI SDK (v7) high-level `LanguageModelUsage`, typed
+ * locally so this module never imports the AI SDK. `streamText`/`generateText` resolve
+ * a usage object of (at least) this shape; absent fields default to zero. NB v7 moved
+ * the cache/reasoning counts out of the flat top level into `inputTokenDetails` /
+ * `outputTokenDetails` (v5 was flat `cachedInputTokens` / `reasoningTokens`).
  */
 export interface AiSdkUsage {
 	inputTokens?: number;
 	outputTokens?: number;
 	totalTokens?: number;
-	reasoningTokens?: number;
-	cachedInputTokens?: number;
+	inputTokenDetails?: {
+		noCacheTokens?: number;
+		cacheReadTokens?: number;
+		cacheWriteTokens?: number;
+	};
+	outputTokenDetails?: {
+		textTokens?: number;
+		reasoningTokens?: number;
+	};
 }
 
 /**
  * Bridge the AI SDK per-call usage into `PromptUsage`, computing cost from the
  * resolved {@link ModelHandle.cost} rates (per-token; absent rates ⇒ zero cost).
- * `cachedInputTokens` maps to `cacheRead`; the AI SDK's generic usage carries no
- * cache-write count (it surfaces only in provider metadata), so `cacheWrite` is
- * `0` here and refined by provider-specific accounting later (doc 08 §4.7).
+ * `inputTokenDetails.cacheReadTokens` (v7; was the flat `cachedInputTokens` in v5) maps
+ * to `cacheRead`. `cacheWrite` is kept `0` here and refined by provider-specific accounting
+ * later (doc 08 §4.7) — v7 now also surfaces `inputTokenDetails.cacheWriteTokens`, but wiring
+ * it here would double-count against that provider-side refinement.
  */
 export function usageFromAiSdk(
 	usage: AiSdkUsage | undefined,
@@ -103,7 +113,7 @@ export function usageFromAiSdk(
 	if (!usage) return emptyUsage();
 	const input = usage.inputTokens ?? 0;
 	const output = usage.outputTokens ?? 0;
-	const cacheRead = usage.cachedInputTokens ?? 0;
+	const cacheRead = usage.inputTokenDetails?.cacheReadTokens ?? 0;
 	const cacheWrite = 0;
 	const totalTokens = usage.totalTokens ?? input + output;
 	const rates = handle?.cost;

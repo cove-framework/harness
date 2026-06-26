@@ -18,8 +18,15 @@ These compile and behave the same. Live ports in
 - `defineAgentProfile(profile)` — same file
 - `defineTool(tool)` → `ToolDefinition` — [`tool.ts`](../../src/runtime/tool.ts)
   (`normalizeToolDefinition` is an **internal** helper consumed by `buildTools`, not part
-  of the public barrel — at parity with flue, which also does not export it)
-- `AgentProfile`, `AgentRuntimeConfig`, `AgentCreateContext`, `AgentHarnessOptions`
+  of the public barrel — at parity with flue, which also does not export it). A tool's
+  `execute` may return **`string | ToolResult`** (`{ content: ToolResultContent[];
+  details?: unknown; isError?: boolean }`) — `details` is a model-invisible side-channel
+  and `isError:true` surfaces as an error tool-result; run termination stays reserved for
+  the framework result tools.
+- `AgentProfile`, `AgentRuntimeConfig`, `AgentCreateContext`, `AgentHarnessOptions` —
+  `AgentProfile` now carries **`extensions?: ExtensionSpec[]`** and **`mcpServers?:
+  McpServerOptions[]`** as first-class profile fields (the Phase-1 fix; see *Extensions*
+  and *MCP servers* below)
 
 **Context / harness / session (types)** — [`types.ts`](../../src/runtime/types.ts)
 - `CoveContext` (`id`, `payload`, `env`, `req`, `log`, `init()`)
@@ -115,6 +122,38 @@ user-authored orchestration over agents:
   the `runs` table carries a `kind: 'agent' | 'workflow'` discriminator, which also
   resolves the prior agentName-rekey conflation. The HTTP route lands in **P8** with
   the registry/codegen in **P8.5** — see [06 — Phase Roadmap](06-phase-roadmap.md).
+
+## Extensions (in-process plugins)
+
+An agent author attaches **extensions** — in-process plugins that contribute tools,
+system-prompt fragments, and lifecycle handlers — either named in a
+`defineExtensionRegistry({ name: factory })` (Convex-app-bound, codegen-installed, exactly
+like `defineAgentRegistry`/`defineToolRegistry`) **or** inline in the profile's
+**`extensions?: ExtensionSpec[]`** field.
+
+- **Factory shape:** `ExtensionFactory = (cove: ExtensionRegistrationAPI) => void |
+  Promise<void>`. The registration API exposes **only** `registerTool(tool)`,
+  `registerSystemPromptFragment(fragment)`, and `on(event, handler)` — and **no action
+  methods**, which is what makes re-running a factory per isolate safe. Inside a handler,
+  `ctx: ExtensionContext` exposes `appendEntry(customType, data?)` (writes a
+  `kind:"custom"` side-state entry, excluded from LLM context) and `getContextUsage()`.
+- **Three hook classes** ([08 §4.12](08-conventions-and-execution-boundary.md#412-extensions--the-determinism-class-contract)):
+  **registration** (`setup` + `registerTool`/`registerSystemPromptFragment`, run once,
+  frozen into the manifest); **content-mutation** (`context`, `before_agent_start`,
+  `tool_call`, `tool_result`, `session_before_compact`, …, run behind the replay guard as
+  pure fns); **notify** (`agent_start`/`agent_end`, `turn_start`/`turn_end`, …,
+  fire-and-forget, skippable on replay).
+- **`defineExtensionRegistry` vs inline.** A **named** registry extension recovers its
+  handler closures across isolates (re-bound by name, in manifest order) and is the
+  durable choice; an **inline** factory in `extensions` is bound by manifest **position**
+  only. The ordered manifest freezes into `runPlan.extensions`.
+- **Where the registry lives:** `defineExtensionRegistry` is **Convex-app-bound** — `cove
+  init` scaffolds `convex/extensionRegistry.ts` and `cove build` emits
+  `convex/_cove/extensionResolver.ts` (a side-effect install of the registry per isolate)
+  — so, like `defineAgentRegistry`, it is exported from the app/CLI surface, not the pure
+  `@cove/runtime` barrel.
+- **Trust model (v1):** extensions are **TRUSTED, single-tenant per deploy**; the purity
+  contract is a *determinism* requirement, not a security boundary.
 
 ## MCP servers (network tools the call site declares)
 

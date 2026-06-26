@@ -263,7 +263,7 @@ terminalizes via `finish`/`give_up`; `MAX_FOLLOWUPS` only bounds the result-tool
 re-nudge). Cove keeps that intent: a run normally ends when `llmStep` returns
 `finishReason === "stop"` or the model calls a terminal tool; `maxSteps` only catches a
 runaway loop. It is **resolved at `setup` and frozen onto the plan** (origin
-`DurabilityConfig.maxSteps`, **default 100**) and carried on `frozenPlanValidator`.
+`DurabilityConfig.maxSteps`, **default 100**) and carried on `runPlanValidator`.
 **At the cap** the loop stops and `finalize` terminalizes the request as `failed` with a
 `step_limit_exceeded` reason — distinct from a model-driven `completed`, so hitting the
 ceiling is observable, never silent. The result-tool re-nudge has its **own** independent
@@ -286,7 +286,7 @@ loop consults the **result bundle outcome** (`pending | finished | gave_up`):
 
 `maxFollowUps` is resolved at `setup` and frozen onto the plan exactly parallel to
 `maxSteps` (origin `DurabilityConfig.maxFollowUps`, **default 32** = `MAX_FOLLOWUPS`),
-carried on `frozenPlanValidator`. The **follow-up counter is per-step durable state**
+carried on `runPlanValidator`. The **follow-up counter is per-step durable state**
 threaded across the journaled `llmStep → dispatchTools → finalize` split — replay-
 deterministic and **distinct from `stepNumber`** (a step can produce multiple result
 follow-ups without advancing the turn cap, and vice versa). **On exhaustion** the loop
@@ -309,6 +309,88 @@ model-issued tool call. The envelope emits a `tool_start` + terminal `tool` **pa
 - **Failure branch** is recorded structurally: `details.{ command, exitCode: -1 }` (the `-1`
   sentinel marks a shell that never produced an exit code), with the message normalized via
   `getErrorMessage`.
+
+### 4.12 Extensions & the determinism-class contract
+
+Extensions ([`src/runtime/extensions/`](../../src/runtime/extensions/)) are the
+in-process plugin surface — they contribute tools, system-prompt fragments, and
+lifecycle handlers without touching the durable loop's internals. The whole subsystem
+is **V8-safe pure logic** (no AI SDK / `"use node"` import), which is what lets an
+extension factory run **inside the V8 `setup` mutation**: the registration contract is
+*pure data collection*, so re-running a factory per isolate is side-effect-free.
+
+An extension is authored as an `ExtensionFactory = (cove: ExtensionRegistrationAPI) =>
+void | Promise<void>` — either named in a `defineExtensionRegistry({ name: factory })`
+(Convex-app-bound, codegen-installed, mirroring `agentRegistry`/`toolRegistry`) or
+inline in a profile's `extensions` array. The registration API exposes exactly
+`registerTool(tool)`, `registerSystemPromptFragment(fragment)`, and `on(event,
+handler)` — and **no action methods** (that absence is the guarantee that re-running a
+factory per isolate cannot diverge). Inside a handler, `ctx: ExtensionContext` exposes
+`appendEntry(customType, data?)` and `getContextUsage()`.
+
+Every hook falls into one of **three determinism classes** (`eventClass()` in
+`extensions/types.ts`), and the class dictates *where* it runs:
+
+| Class | Hooks | Where it runs |
+| --- | --- | --- |
+| **registration** | `setup` + `registerTool`/`registerSystemPromptFragment` | once, at load, as pure data collection; its output serializes into the frozen `runPlan` manifest |
+| **content-mutation** | `context`, `before_provider_request`, `before_agent_start`, `message_end`, `tool_call`, `tool_result`, `session_before_compact` | **behind** the `runDecode`/`loadStep` replay guard, as **pure fns of `(frozen plan + persisted step inputs + event payload)`** |
+| **notify** | `agent_start`, `agent_end`, `turn_start`, `turn_end`, `tool_execution_start`/`end`, `session_compact`, `model_select` | fire-and-forget at any boundary, **skippable on replay**; must **never** feed back into journaled inputs |
+
+The **purity contract is a determinism requirement, not a security one** — extensions
+are TRUSTED, single-tenant per deploy ([trust model v1]). A content-mutation hook that
+reads live, non-frozen state reintroduces exactly the non-determinism `runPlan` exists
+to prevent; placing it on the live-rebuild path (where its only inputs are the frozen
+plan + persisted step rows + the event payload) is what keeps replay byte-identical.
+
+`session_before_compact` carries two Cove-safe controls: returning **cancel is a NOOP**
+(the `compact` step simply returns — it does **not** fail the run, a deliberate
+divergence from pi), or supplying a **`replacementSummary`** skips the summarization
+model call entirely.
+
+### 4.13 Frozen extension manifest on `runPlan`
+
+`runPlan` now also freezes the **ordered, data-only extension manifest** as
+`runPlan.extensions: ExtensionManifestEntry[]`, where each entry is
+`{ name, tools: string[], systemPromptFragments: string[], events: ExtensionEventName[] }`.
+On replay the engine **re-binds** by re-running the named factories **in manifest
+order** to recover their handler closures — order is load-bearing because the `context`
+rewrite chain is sequential. Inline factories are bound by manifest **position**; only
+**named** extensions recover closures across isolates. (`runPlan` is the
+former `frozenPlan`, renamed — see [§4.9](#49-step-cap--loop-termination) /
+[§4.10](#410-result-tool-re-nudge--termination); it stays the frozen, journaled,
+replay-determinism backbone.)
+
+### 4.14 Provider plugins
+
+Provider behavior is pluggable via `convex/providers/`: a `ProviderPlugin` registered
+through `registerProviderPlugin` (with `getProviderPlugin`/`hasProviderPlugin`) in
+`plugin.ts`, plus four self-registering built-ins in `builtins.ts`. `capabilities.ts`,
+`registry.ts`, `thinking.ts`, and `gateway.ts` consult the plugin map **first**, with
+the legacy hardcoded switch as a **fallback** (zero behavior change). The plugin layer
+stays inside the V8 boundary: `thinking.ts` is now V8-safe (its `"use node"` was
+removed), and `ModelHandle.model: unknown` keeps the V8 layer free of any AI SDK import.
+
+### 4.15 Tool registry & `ToolResult` widening
+
+User tools resolve through a name-keyed registry in
+[`src/runtime/tool-registry.ts`](../../src/runtime/tool-registry.ts)
+(`defineToolRegistry`/`registerToolRegistry`/`getRegisteredTool`/`listRegisteredTools`,
+mirroring `agentRegistry`). The `kind:"user"` tool path is now **live**: because a
+closure cannot cross the journal, `dispatchTools` recovers a user tool's `execute`
+closure **by name** via `getRegisteredTool(name)` (previously a dead path that degraded
+to `errorTool`). The consequence is a hard rule — **user tools must be module-scope and
+registered by name**; an inline-in-`initialize` user tool is **rejected at validation**.
+`cove build` emits `convex/_cove/toolResolver.ts`; `cove init` scaffolds
+`convex/toolRegistry.ts`.
+
+`ToolDefinition.execute`'s return type is widened from `Promise<string>` to
+`Promise<string | ToolResult>` ([`src/runtime/tool-types.ts`](../../src/runtime/tool-types.ts)):
+`ToolResult = { content: ToolResultContent[]; details?: unknown; isError?: boolean }`,
+with `ToolResultContent = {type:"text";text} | {type:"image";data;mimeType}`. `details`
+is a **side-channel** (not sent to the model); `isError:true` surfaces as an **error
+tool-result**. Run termination stays reserved for the framework result tools — a tool
+result never terminalizes the run.
 
 ---
 

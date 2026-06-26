@@ -85,6 +85,8 @@ interface AgentRuntimeConfig {
   skills?: Skill[];
   tools?: ToolDefinition[];
   subagents?: AgentProfile[];
+  extensions?: ExtensionSpec[];      // registered extension names and/or inline factories
+  mcpServers?: McpServerOptions[];   // remote MCP servers to mount
   thinkingLevel?: ThinkingLevel;
   compaction?: false | CompactionConfig;
   durability?: DurabilityConfig;
@@ -172,6 +174,36 @@ export const lead = createAgent(() => ({
 
 For the depth limit, child-session naming, and how delegation results are shaped, see [Subagents & Workflows](06-subagents-and-workflows.md).
 
+## `extensions` and `mcpServers`
+
+Two optional array fields let you augment an agent without editing its instructions or tool list.
+
+- **`extensions`** is an array of `ExtensionSpec` entries (`type ExtensionSpec = string | ExtensionFactory`). Each entry is either a **registered extension name** (a string, resolved against the extension registry) or an **inline `ExtensionFactory`** function. An extension can contribute system-prompt fragments and tools and subscribe hooks into the run; see [Tools, Skills & Human-in-the-Loop — Extensions](04-tools-skills-hitl.md#extensions) for the full authoring surface.
+- **`mcpServers`** is an array of `McpServerOptions` describing remote MCP servers to mount. Each entry needs a `name` (the `<server>` in the adapted `mcp__<server>__<tool>` tool names) and a `url` (`string | URL`); `transport` is optional (`"streamable-http" | "sse"`). The same servers can also be supplied per request.
+
+```ts
+export const writer = createAgent(() => ({
+  model: "anthropic/claude-sonnet-4-5",
+  instructions: "Draft and refine prose.",
+  extensions: [
+    "house-style",                                    // a name registered in the extension registry
+    (cove) => cove.registerSystemPromptFragment("Prefer active voice."), // an inline factory
+  ],
+  mcpServers: [
+    { name: "docs", url: "https://mcp.example.com/docs", transport: "streamable-http" },
+  ],
+}));
+```
+
+Both fields are validated at agent-profile/config validation time:
+
+- **`extensions`** (`assertExtensions`): every entry must be a non-empty string **or** a function; anything else throws `'[cove] <label> extensions[<i>] must be a registered extension name (string) or an extension factory (function).'`. Duplicate **names** throw `'[cove] <label> must not contain duplicate extension name "<name>".'` (inline factories are anonymous and not deduplicated). Whether a named extension actually exists is checked when the registry loads it, not here.
+- **`mcpServers`** (`assertMcpServers`): each entry must be an object with a non-empty `name` and a `url` that is a string or `URL`; `transport`, if present, must be one of `streamable-http` / `sse`. Duplicate server `name`s throw `'[cove] <label> must not contain duplicate MCP server name "<name>".'`.
+
+> **`mcpServers` is now a first-class profile/config field.** Earlier drafts of this guide said the validator rejects `mcpServers` on the agent config — that is no longer true. You may declare it on the created agent, on a base `AgentProfile`, and/or supply it per request. (Unknown *other* top-level fields still throw.)
+
+When a config carries both a `profile` and its own `extensions`/`mcpServers`, they **concatenate** (base profile first, then config additions) like the other array fields.
+
 ## `thinkingLevel`
 
 ```ts
@@ -256,6 +288,8 @@ interface AgentProfile {
   skills?: Skill[];
   tools?: ToolDefinition[];
   subagents?: AgentProfile[];
+  extensions?: ExtensionSpec[];
+  mcpServers?: McpServerOptions[];
   thinkingLevel?: ThinkingLevel;
   compaction?: false | CompactionConfig;
   durability?: DurabilityConfig;
@@ -269,7 +303,7 @@ Profile validation is strict (a valibot `strictObject`): unknown fields throw `'
 When a created-agent config carries a `profile`, the two are **merged** with these rules:
 
 - **Scalar fields** (`model`, `instructions`, `description`, `thinkingLevel`, `compaction`, `durability`) — the config value **replaces** the profile value when the config sets that own property.
-- **Array fields** (`skills`, `tools`, `subagents`) — **concatenated**, base profile first, then config additions. (Duplicate names across the merge will fail uniqueness validation downstream, so keep names distinct.)
+- **Array fields** (`skills`, `tools`, `subagents`, `extensions`, `mcpServers`) — **concatenated**, base profile first, then config additions. (Duplicate names across the merge will fail uniqueness validation downstream, so keep names distinct.)
 
 ```ts
 const base = defineAgentProfile({
@@ -291,11 +325,11 @@ export const specialized = createAgent(() => ({
 ```ts
 function extendAgentProfile(
   profile: AgentProfile,
-  extensions: Pick<AgentProfile, "skills" | "tools" | "subagents">,
+  additions: Pick<AgentProfile, "skills" | "tools" | "subagents" | "extensions" | "mcpServers">,
 ): AgentProfile
 ```
 
-`extendAgentProfile` returns a **new** profile with `skills`/`tools`/`subagents` merged (base first, then extensions). It does **not** re-validate, so feed it already-valid inputs.
+`extendAgentProfile` returns a **new** profile with `skills`/`tools`/`subagents`/`extensions`/`mcpServers` merged (base first, then additions). It does **not** re-validate, so feed it already-valid inputs.
 
 ```ts
 const withExtraTools = extendAgentProfile(base, { tools: [fetchTool] });
@@ -310,7 +344,7 @@ interface ToolDefinition<TParams extends ToolParameters = ToolParameters> {
   name: string;        // unique across built-in and custom tools
   description: string; // non-empty; tells the model when/how to use it
   parameters: TParams; // a valibot object schema OR a raw JSON Schema object
-  execute: (args: ToolArgs<TParams>, signal?: AbortSignal) => Promise<string>;
+  execute: (args: ToolArgs<TParams>, signal?: AbortSignal) => Promise<string | ToolResult>;
 }
 ```
 
@@ -318,7 +352,7 @@ All four fields are required and validated at agent-profile/config validation ti
 
 - `name` and `description` must be non-empty strings; `name` must be unique across all tools (built-in + custom).
 - `parameters` is required and must be an object.
-- `execute` must be a function returning `Promise<string>` — its return string is sent back to the model. **Thrown errors become tool errors** delivered to the model, so throw with a useful message.
+- `execute` must be a function returning `Promise<string | ToolResult>` — a returned **string** is sent back to the model verbatim; a returned **`ToolResult`** lets you emit images, attach side-channel `details` (not sent to the model), or flag `isError`. **Thrown errors become tool errors** delivered to the model, so throw with a useful message. See [the `execute` return contract](04-tools-skills-hitl.md#the-execute-return-contract-string--toolresult) for the `ToolResult` shape and examples.
 
 ### Typed parameters with valibot (recommended)
 
@@ -383,6 +417,10 @@ export const weatherAgent = createAgent(() => ({
   tools: [getWeather],
 }));
 ```
+
+> **Define custom tools at module scope.** A custom (`kind: "user"`) tool's descriptor is frozen into the plan, but its `execute` closure cannot cross the durable journal — the engine **recovers it by name** across replays. So a tool must be defined at module scope (and, to be resolvable by name across cold boots, registered in the tool registry — see below). A tool created **inline inside a dynamic `initialize()` return** has a closure the journal can't recover and is **rejected at validation**. Reach `getWeather` from a top-level `const`, not from inside the initializer body.
+
+> **Registering tools by name.** `cove init` scaffolds `convex/toolRegistry.ts` (a `defineToolRegistry({ name: tool })` map, Convex-app-bound like `agentRegistry.ts`); `cove build` codegens `convex/_cove/toolResolver.ts`, which installs it. Putting your module-scope tools in that registry is what lets dispatch re-resolve each `execute` by name per isolate.
 
 ## Registering agents with `defineAgentRegistry`
 

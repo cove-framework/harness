@@ -133,7 +133,9 @@ function mapAssistantContent(content: (TextContent | ThinkingContent | ToolCall)
 function mapToolResultOutput(content: (TextContent | ImageContent)[]) {
 	const value = content.map((block) => {
 		if (block.type === "image") {
-			return { type: "media" as const, data: block.data, mediaType: block.mimeType };
+			// AI SDK v7: base64 image data in a tool-result `content` output is `image-data`
+			// (was `media` in v5). FileData-backed images would be `file`; Cove passes a base64 string.
+			return { type: "image-data" as const, data: block.data, mediaType: block.mimeType };
 		}
 		return { type: "text" as const, text: sanitizeSurrogates(block.text) };
 	});

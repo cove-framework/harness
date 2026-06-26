@@ -41,7 +41,7 @@ flue addresses a session by name within a harness within a context (`ctx.id`).
 | `instanceId`, `harnessName`, `sessionName` | the addressing tuple |
 | `version` (6), `affinityKey`, `leafId`, `taskSessions[]`, `metadata` | the `SessionData` header fields |
 | `state` (`idle`/`active`/`deleting`) | flue's per-session serialization + delete guard |
-| `model`, `plan` (frozen) | default model + the resolved/frozen `AgentRuntimeConfig` snapshot |
+| `model`, `runPlan` (frozen, optional) | default model + the resolved/frozen `AgentRuntimeConfig` snapshot (`runPlanValidator`) — model, systemPrompt, tools, cwd, resultSchema, approvalTools, compaction, and `extensions` (the ordered, data-only extension manifest) |
 
 Indexes: `by_instance_harness_session` (lookup), `by_instance` (cascade/list).
 
@@ -57,10 +57,17 @@ indexed load.
 | --- | --- |
 | `sessionId`, `entryId`, `parentId` | the tree links (`entryId`/`parentId` are flue-generated strings) |
 | `position` | monotonic insertion order → stable, indexed ordered rebuild |
-| `kind`, `data` | `message`/`compaction` + the full entry payload (**minus hoisted images**) |
+| `kind`, `data` | `message`/`compaction`/`custom` + the full entry payload (**minus hoisted images**) |
 | `imageAttachmentIds[]` | content hashes into `imageChunks` for hoisted image bytes |
 
 Indexes: `by_session_and_position`, `by_session_and_entry`.
+
+**`custom` entries (extension side-state).** Beyond `message`/`compaction`, the `kind`
+union carries **`custom`** — entries written by an extension's `appendEntry`. They are
+persisted as side-state, **idempotent by deterministic key**, **excluded from LLM
+context**, and do **not** advance the active leaf (they record extension-side data, not
+conversation turns). See the extension model in
+[08 §4.12](08-conventions-and-execution-boundary.md#412-extensions--the-determinism-class-contract).
 
 **Diff-sync.** `SessionStore.save(id, data)` does **not** rewrite the tree — it
 appends only the new entries (the tree is append-only except `setLeaf` rewinds)
@@ -82,7 +89,11 @@ pending ──schedule──▶ running ──stop──▶ completed   (finishR
 
 Carries `submissionId` (returned to the caller + correlates events),
 `convexWorkflowId` (for `workflow.cancel`), and the structured `result` when the
-caller passed `options.result`. Indexes: `by_session`,
+caller passed `options.result`. It also carries the **frozen `runPlan`** resolved at
+`setup` (`runPlanValidator`) — the replay-determinism snapshot whose `extensions` field
+freezes the **ordered extension manifest** (`ExtensionManifestEntry[]`) re-bound in
+order on replay (see [08 §4.13](08-conventions-and-execution-boundary.md#413-frozen-extension-manifest-on-runplan)).
+Indexes: `by_session`,
 `by_session_and_status` (the supersede/pending gate), `by_submission`,
 `by_instance`.
 

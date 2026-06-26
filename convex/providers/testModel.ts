@@ -1,6 +1,6 @@
 "use node";
 // New (Convex backend) · @cove/runtime
-// Pattern source: Vercel AI SDK `MockLanguageModelV2` (ai/test) — supersedes pi · packages/ai/src/providers/faux.ts
+// Pattern source: Vercel AI SDK `MockLanguageModelV3` (ai/test) — supersedes pi · packages/ai/src/providers/faux.ts
 //   (plan 03 / 08 §5: faux.ts is NOT ported).
 //
 // The single deterministic injection point P3 smoke + P4 replay/throughput tests drive:
@@ -8,18 +8,18 @@
 // (no live provider) and whose default canned response is BYTE-STABLE (no Date.now / Math.random) so
 // replay-equality is exact.
 //
-// We implement the AI SDK `LanguageModelV2` interface DIRECTLY as a plain object rather than wrapping
-// `MockLanguageModelV2` from `ai/test`. That subpath is a single bundled module that statically pulls
+// We implement the AI SDK `LanguageModelV3` interface DIRECTLY as a plain object rather than wrapping
+// `MockLanguageModelV3` from `ai/test`. That subpath is a single bundled module that statically pulls
 // in `msw` (an unshipped *devDependency* of @ai-sdk/provider-utils, used only by `createTestServer`,
 // which cove never calls), so importing it would require a phantom dependency the consumer install
-// does not carry. A hand-rolled `LanguageModelV2` keeps the seam dependency-free and drives both
+// does not carry. A hand-rolled `LanguageModelV3` keeps the seam dependency-free and drives both
 // `generateText` (doGenerate) and `streamText` (doStream).
 
 import type {
-	LanguageModelV2,
-	LanguageModelV2Content,
-	LanguageModelV2StreamPart,
-	LanguageModelV2Usage,
+	LanguageModelV3,
+	LanguageModelV3Content,
+	LanguageModelV3StreamPart,
+	LanguageModelV3Usage,
 } from "@ai-sdk/provider";
 import type { ModelHandle } from "../../src/runtime/messages.ts";
 
@@ -29,8 +29,15 @@ export const RESERVED_TEST_MODEL_ID = "cove-test/mock";
 /** The canned text every default mock turn returns. Byte-stable for replay equality. */
 export const RESERVED_TEST_MODEL_TEXT = "cove mock response";
 
-/** Fixed usage every default mock turn reports. Byte-stable for replay equality. */
-const DEFAULT_USAGE: LanguageModelV2Usage = { inputTokens: 4, outputTokens: 5, totalTokens: 9 };
+/**
+ * Fixed usage every default mock turn reports. Byte-stable for replay equality.
+ * AI SDK v7 `LanguageModelV3Usage` is nested (input/output token detail) — the SDK
+ * folds this into the high-level `LanguageModelUsage` the engine reads (input 4 / output 5).
+ */
+const DEFAULT_USAGE: LanguageModelV3Usage = {
+	inputTokens: { total: 4, noCache: 4, cacheRead: 0, cacheWrite: 0 },
+	outputTokens: { total: 5, text: 5, reasoning: 0 },
+};
 
 /** Whether a model specifier targets the reserved in-process test model. */
 export function isTestModelId(modelString: string): boolean {
@@ -41,41 +48,41 @@ export function isTestModelId(modelString: string): boolean {
 export interface MockLanguageModelOptions {
 	provider?: string;
 	modelId?: string;
-	doGenerate?: LanguageModelV2["doGenerate"];
-	doStream?: LanguageModelV2["doStream"];
+	doGenerate?: LanguageModelV3["doGenerate"];
+	doStream?: LanguageModelV3["doStream"];
 }
 
 /**
- * Build a plain `LanguageModelV2` mock. The default `doGenerate`/`doStream` both
+ * Build a plain `LanguageModelV3` mock. The default `doGenerate`/`doStream` both
  * emit {@link RESERVED_TEST_MODEL_TEXT} with {@link DEFAULT_USAGE} and no time/random
  * sources, so two resolves produce byte-identical output. Pass `doGenerate`/`doStream`
  * to stub specific behavior (P4 replay/throughput).
  */
-export function makeMockLanguageModel(options: MockLanguageModelOptions = {}): LanguageModelV2 {
+export function makeMockLanguageModel(options: MockLanguageModelOptions = {}): LanguageModelV3 {
 	const text = RESERVED_TEST_MODEL_TEXT;
 	return {
-		specificationVersion: "v2",
+		specificationVersion: "v3",
 		provider: options.provider ?? "cove-test",
 		modelId: options.modelId ?? "mock",
 		supportedUrls: {},
 		doGenerate:
 			options.doGenerate ??
 			(async () => ({
-				finishReason: "stop" as const,
+				finishReason: { unified: "stop", raw: "stop" } as const,
 				usage: { ...DEFAULT_USAGE },
-				content: [{ type: "text", text } satisfies LanguageModelV2Content],
+				content: [{ type: "text", text } satisfies LanguageModelV3Content],
 				warnings: [],
 			})),
 		doStream:
 			options.doStream ??
 			(async () => ({
-				stream: new ReadableStream<LanguageModelV2StreamPart>({
+				stream: new ReadableStream<LanguageModelV3StreamPart>({
 					start(controller) {
 						controller.enqueue({ type: "stream-start", warnings: [] });
 						controller.enqueue({ type: "text-start", id: "0" });
 						controller.enqueue({ type: "text-delta", id: "0", delta: text });
 						controller.enqueue({ type: "text-end", id: "0" });
-						controller.enqueue({ type: "finish", finishReason: "stop", usage: { ...DEFAULT_USAGE } });
+						controller.enqueue({ type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage: { ...DEFAULT_USAGE } });
 						controller.close();
 					},
 				}),
@@ -84,7 +91,7 @@ export function makeMockLanguageModel(options: MockLanguageModelOptions = {}): L
 }
 
 /** The byte-stable default mock language model. */
-export function makeDefaultMockModel(): LanguageModelV2 {
+export function makeDefaultMockModel(): LanguageModelV3 {
 	return makeMockLanguageModel();
 }
 
@@ -95,13 +102,13 @@ export interface MakeTestModelHandleOptions {
 }
 
 /**
- * Assemble a `ModelHandle` wrapping a mock `LanguageModelV2`. Pass a custom mock to
+ * Assemble a `ModelHandle` wrapping a mock `LanguageModelV3`. Pass a custom mock to
  * stub specific `doGenerate`/`doStream` behavior (P4 replay/throughput); omit it for
  * the byte-stable default. `supportsVision`/`supportsReasoning` are toggleable so the
  * downgrade + thinking paths can be exercised against the mock.
  */
 export function makeTestModelHandle(
-	mock?: LanguageModelV2,
+	mock?: LanguageModelV3,
 	options: MakeTestModelHandleOptions = {},
 ): ModelHandle {
 	const model = mock ?? makeDefaultMockModel();

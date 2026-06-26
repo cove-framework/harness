@@ -10,6 +10,13 @@ convention, the orchestration ↔ execution boundary, and the **hardened engine
 contracts** (§4 there). Where a phase below names a contract, the authoritative
 value lives in 08; this doc only schedules the work.
 
+> **Note — this is the original P0–P12 rewrite roadmap.** A later **pragmatic
+> refactor** (the `frozenPlan` → `runPlan` rename, the extensions subsystem, provider
+> plugins, the now-live tool registry, and incremental compaction) landed **on top of**
+> these phases and is tracked separately in
+> [`../REFACTOR-PRAGMATIC.md`](../REFACTOR-PRAGMATIC.md). It does **not** renumber or
+> supersede the P0–P12 phases below; they remain the dependency-ordered build plan.
+
 Legend: ✅ done · ◻ pending.
 
 ---

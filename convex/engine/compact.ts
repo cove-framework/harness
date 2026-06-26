@@ -6,7 +6,7 @@
 // Explicit session.compact() calls this directly; the loop's threshold auto-trigger (shouldCompact gate)
 // wires the same action and is the small remaining wire. "use node": imports the AI SDK + the gateway.
 
-import type { LanguageModelV2 } from "@ai-sdk/provider";
+import type { LanguageModelV3 } from "@ai-sdk/provider";
 import { generateText } from "ai";
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
@@ -167,11 +167,11 @@ export const compact = internalAction({
 				? `<previous-summary>\n${prep.previousSummary}\n</previous-summary>\n\n<conversation>\n${historyText}\n</conversation>\n\n${UPDATE_SUMMARIZATION_PROMPT}`
 				: `<conversation>\n${historyText}\n</conversation>\n\n${SUMMARIZATION_PROMPT}`;
 			const [historyResult, prefixResult] = await Promise.all([
-				generateText({ model: handle.model as LanguageModelV2, system: SUMMARIZATION_SYSTEM_PROMPT, prompt: historyPrompt }),
+				generateText({ model: handle.model as LanguageModelV3, instructions: SUMMARIZATION_SYSTEM_PROMPT, prompt: historyPrompt }),
 				prep.isSplitTurn
 					? generateText({
-							model: handle.model as LanguageModelV2,
-							system: SUMMARIZATION_SYSTEM_PROMPT,
+							model: handle.model as LanguageModelV3,
+							instructions: SUMMARIZATION_SYSTEM_PROMPT,
 							prompt: `<conversation>\n${serializeConversation(prep.turnPrefixMessages)}\n</conversation>\n\n${TURN_PREFIX_SUMMARIZATION_PROMPT}`,
 						})
 					: Promise.resolve(undefined),

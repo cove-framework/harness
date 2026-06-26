@@ -1,6 +1,6 @@
 // New (Convex backend) · @cove/runtime · phase-03 execution-boundary guard (08 §3 / acceptance #9).
 // The V8-safe core (src/runtime/*) must NEVER import the AI SDK — ModelHandle.model is `unknown`
-// there, cast back to LanguageModelV2 only inside convex/providers. The provider files that import
+// there, cast back to LanguageModelV3 only inside convex/providers. The provider files that import
 // the AI SDK at runtime (gateway.ts, the barrel) carry "use node".
 
 import { readdirSync, readFileSync } from "node:fs";

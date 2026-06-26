@@ -84,7 +84,10 @@ describe("usageFromAiSdk", () => {
 		expect(usageFromAiSdk(undefined, undefined)).toEqual(emptyUsage());
 	});
 	it("maps AI SDK token fields and derives totalTokens when absent", () => {
-		const p = usageFromAiSdk({ inputTokens: 4, outputTokens: 5, cachedInputTokens: 2 }, undefined);
+		const p = usageFromAiSdk(
+			{ inputTokens: 4, outputTokens: 5, inputTokenDetails: { cacheReadTokens: 2 } },
+			undefined,
+		);
 		expect(p.input).toBe(4);
 		expect(p.output).toBe(5);
 		expect(p.cacheRead).toBe(2);
