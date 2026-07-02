@@ -121,7 +121,7 @@ Every contract below comes from the THESIS, the spine (`ingressAuthDesign`, D-AW
 The ingress MUST preserve each.
 
 1. **The orchestrator owns the loop; `admit` only kicks it (THESIS).** `admit` does the admission write +
-   exactly one `StartExecution`; it **never** runs a loop step, never touches the box, never calls the AI SDK.
+   exactly one `StartExecution`; it **never** runs a loop step, never touches the sandbox, never calls the AI SDK.
    The handler Lambdas are V8-safe pure adapters — they only do DynamoDB I/O + the SFN start (mirroring
    [`http.ts:8`](../../../convex/http.ts) "No use node": `httpActions` only call mutations/queries).
 2. **Replay-reconstructable invariant (THESIS).** Everything `admit` writes is the *frozen input* the loop
@@ -283,7 +283,7 @@ Execute in order. Each item is independently checkable.
      UpdateItem/Query/TransactWriteItems) on `Requests`/`Sessions` + their GSIs (least privilege, per table).
 
 8. **Bundle posture.** esbuild-bundle each handler (Node 20, no VPC — D-AWS-11). `admit`/`poll`/`submitWorkflow`
-   import only `store/` + the portable `http.ts` + the AWS SDK SFN/DynamoDB clients (no AI SDK, no `@upstash/box`
+   import only `store/` + the portable `http.ts` + the AWS SDK SFN/DynamoDB clients (no AI SDK, no sandbox adapter
    — these are admission-path Lambdas, **nothing below the port imports the AI SDK**). `submitWorkflow` bundles
    the `workflowRegistry`.
 
@@ -325,7 +325,7 @@ Objective bars — each mirrors the Convex behavior in [`convex/http.ts`](../../
   invalid_json`; missing `message` → `400 invalid_request`; unknown route → 404 — all rendered as
   `{error:{code,message,status}}` ([`src/runtime/http.ts`](../../../src/runtime/http.ts)). A 500 leaks no
   internal detail unless `configureErrorRendering({devMode:true})`.
-- **No loop in ingress (THESIS).** A static/bundle check: no ingress handler imports the AI SDK, `@upstash/box`,
+- **No loop in ingress (THESIS).** A static/bundle check: no ingress handler imports the AI SDK, the sandbox adapter,
   or the engine `loop`/`dispatch` modules; `admit` does exactly one `StartExecution` and zero loop steps.
 - **Raw-byte fidelity declared.** The `/channels/*` route uses Lambda proxy integration with no body transform
   (verified jointly with [G4.7](phase-g4.7-channels-workflows-scheduler.md)); the authorizer never reads the

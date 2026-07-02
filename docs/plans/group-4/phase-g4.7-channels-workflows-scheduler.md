@@ -363,10 +363,10 @@ Objective bars — each mirrors the Convex behavior it replaces.
   state and 400 KB DynamoDB item limits. `mcpDiscover` must write to DynamoDB (not SFN state) and
   spill to S3 with a pointer (D-AWS-10); Setup follows the pointer. A large-roster run without the
   spill wired will fail at the Task boundary.
-- **MCP pool lifetime.** Box/MCP connections kept in the warm container are unbounded if the
+- **MCP pool lifetime.** MCP connections kept in the warm Lambda container are unbounded if the
   container stays warm across many runs without `closeAll()`. The handler `finally` must close the
-  pool; a partial-failure path that skips `finally` leaks connections. (Box keepAlive cost is the
-  [G4.2](phase-g4.2-compute-lambda-actions.md) concern; MCP-pool teardown is here.)
+  pool; a partial-failure path that skips `finally` leaks connections. (The sandbox container leak /
+  host saturation is the [G4.2](phase-g4.2-compute-lambda-actions.md) concern, D-AWS-15; MCP-pool teardown is here.)
 - **Workflow input fidelity.** `admitWorkflow` serializes non-string input with `JSON.stringify`
   ([`admit.ts:231`](../../../convex/invoke/admit.ts)). The SFN `input` carries `{kind, target,
   requestId}` only — the serialized input lives on the Requests row, NOT in the SFN state, to avoid

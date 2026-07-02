@@ -59,7 +59,7 @@ a real Convex surface, not a new feature.
 | Convex surface | AWS replacement |
 | --- | --- |
 | `llmStep` `"use node"` (streamText, `tool()` no execute) | `llmStep` Node Lambda (AI SDK v7, gateway, esbuild); deltas→WS, finalized→DynamoDB |
-| `dispatchTools` `"use node"` (`@upstash/box`, `runDispatch`) | `dispatchTools` Lambda; box reattach by stable id; child `task()` → nested `StartExecution.sync` |
+| `dispatchTools` `"use node"` (`@upstash/box`, `runDispatch`) | `dispatchTools` Lambda; **EC2/Docker container** reattach by stable id (via SSM Run Command); child `task()` → nested `StartExecution.sync` |
 | `compact` `"use node"` (generateText) | `compact` Lambda (idempotent on existing CompactionEntry) |
 | observability `exportSpans` query + `SpanTreeRecorder` fold (`otel.ts`, `read.ts`) | moved verbatim; `exportSpans` becomes a **pull** Lambda over the `Events` table (parity). A live OTLP **push** exporter is group-5/G5.7 enhancement scope — out of this migration |
 
@@ -152,7 +152,7 @@ ASL is derived from and the parity tests run against (**D-AWS-9**).
 | `if (decision.overflow)` (loop.ts:86–95) | **OverflowChoice** → **OverflowBudgetChoice** → **CompactRetry** (`overflowRetries++`) else **FinalizeOverflow** |
 | zero-tool branch (loop.ts:97–113) | **ZeroToolChoice**: `!hasResultSchema`→**FinalizeFreeform**; else **SettleResultZero**→**ResultChoice** |
 | HITL gate (loop.ts:119–122) | **HitlChoice** → **AwaitApproval** Map (`maxConcurrency:1`) else **Dispatch** |
-| `deps.dispatch` (loop.ts:123) | **Dispatch** Task — OOB box; child `task()` → nested `StartExecution.sync` |
+| `deps.dispatch` (loop.ts:123) | **Dispatch** Task — OOB sandbox (EC2/Docker via SSM); child `task()` → nested `StartExecution.sync` |
 | result settle (loop.ts:104–105,125–129) | **ResultGateChoice** → **SettleResult** → **ResultChoice** (finished/gave_up/pending) |
 | follow-up re-nudge (loop.ts:106–113) | **FollowUpBudgetChoice** → **AppendFollowUp** (`followUps++`) else **FinalizeFollowupsExhausted** |
 | threshold compact (loop.ts:131–137) | **CompactThresholdChoice** → **Compact** then `stepNumber++` → **StepCapChoice** |
@@ -224,6 +224,7 @@ journal replay.
 | **D-AWS-12** | Continue-as-new at a step threshold to bound SFN 25k-event history | `maxSteps=100` × states/step + HITL Map + retries can approach the cap; the journal makes the restart boundary stateless. Analogous to the cap-free Convex journal |
 | **D-AWS-13** | Bounded <29 s poll for `?wait=result` parity; WS terminal-frame for the reactive SDK | API GW REST has a hard 29 s integration timeout; the Convex 60 s synchronous poll can't be ported as-is. Keep a shortened poll for wire-contract parity, push the terminal frame over WS for reactive callers |
 | **D-AWS-14** | DynamoDB UpdateItem authoritative for cross-service ops; SFN call best-effort | `StopExecution`/`SendTask` + status write span two services and can't be transactional. Conditional DynamoDB write is the source of truth + states self-check status at entry; the SFN call is idempotent/best-effort |
+| **D-AWS-15** | Sandbox = **self-hosted EC2 + Docker**, replacing `@upstash/box` | Removes the third-party dependency — the sandbox runs entirely in-account. One long-running EC2 host runs Docker; a **container named by the stable id** (`${ctx.id}:${instanceId}:${harnessName}`) is reattached across steps, so the per-run filesystem persists exactly as the box did. `dispatchTools` drives it via **SSM Run Command** (`docker exec`), so the Lambda needs **no inbound networking and stays off-VPC — D-AWS-11 is preserved (no NAT)**. Teardown = `docker rm -f` on finalize/cleanup + a host-side age-reaper (replaces box `keepAlive`/`env.delete()`). **Tradeoff:** containers share the host kernel (weaker than box's Firecracker microVM) and one host is a scale/availability bound — accepted as the simple-for-now posture. The `SessionEnv` seam is **unchanged**, so a later swap to **Fargate** (Firecracker, per-run task) needs no dispatch change. Known perf caveat: per-op SSM Run Command latency; the documented upgrade is a private exec-agent with `dispatchTools` in-VPC. |
 
 ---
 
@@ -257,6 +258,14 @@ journal replay.
 - **EventBridge Scheduler for the compact kickoff** — the only scheduler use is `runAfter(0)`
   (admit.ts:204), a literal 0 delay. An async Lambda `Invoke (InvocationType=Event)` is the faithful
   mapping; no scheduler rule needed at cutover.
+- **Keeping `@upstash/box` as the sandbox** — the original locked choice. Cut for a self-hosted
+  **EC2 + Docker** sandbox (**D-AWS-15**) to drop the third-party dependency and keep everything
+  in-account. The `SessionEnv` seam is unchanged, so this is an adapter swap, not a core change.
+- **Fargate (per-run Firecracker task) for the sandbox now** — the stronger-isolation, auto-scaling
+  option, and the documented **upgrade path** from D-AWS-15. Deferred for now: a per-step `RunTask`
+  pays ~10–40 s cold-start each dispatch, and a warm-task-per-run model bills idle compute across
+  multi-hour HITL parks (worse than one shared EC2). Revisit when shared-kernel isolation or
+  single-host scale becomes the binding constraint.
 
 ---
 
@@ -267,7 +276,7 @@ G4.1  Foundation: CDK scaffold + DynamoDB (9 tables/GSIs) + S3 + IAM + SSM/Secre
   │      (the seam everything binds to; SessionStore/journal/event/approval/blob stores)
   │
   ├────────────► G4.2  Compute: setup/llmStep/dispatchTools/compact/finalize/mcpDiscover Lambdas
-  │                │      (needs store/ for DynamoDB I/O + S3 spill; provider registry; box; esbuild)
+  │                │      (needs store/ for DynamoDB I/O + S3 spill; provider registry; EC2/Docker sandbox host; esbuild)
   │                │
   │                ├────► G4.3  Orchestrator: ASL STANDARD state machine driving G4.2 Lambdas
   │                │        │      (needs the task Lambdas to wire as Task states; journal idempotency)
@@ -303,8 +312,9 @@ the orchestrator, not a Lambda, that drives `setup → (llmStep → dispatchTool
 subagent fan-out (via nested `StartExecution.sync`); the execution history + DynamoDB journal are the
 crash-recovery substrate, exactly as the Convex journal was. **The LLM decides but does not control
 flow** — `llmStep` returns only a small `{overflow, toolCallCount, gatedCount, shouldCompact}` decision
-summary and the ASL Choice states branch on it. **Tools dispatch out-of-band** in an `@upstash/box`
-sandbox with **no AI-SDK `execute`** — `dispatchTools` rebuilds executable tools from frozen
+summary and the ASL Choice states branch on it. **Tools dispatch out-of-band** in a self-hosted
+**EC2/Docker** sandbox (D-AWS-15, reattached by stable id via SSM Run Command) with **no AI-SDK
+`execute`** — `dispatchTools` rebuilds executable tools from frozen
 descriptors and runs them itself (decode.ts:339 keeps `tool()` execute-free). **The AI SDK stays thin**
 — only `llmStep`/`compact` touch `streamText`/`generateText`/`tool()`; nothing above it (loop,
 durability, HITL, telemetry, sandbox) lives in the SDK. And the invariant that **anything a step

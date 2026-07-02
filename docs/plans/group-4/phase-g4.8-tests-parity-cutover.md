@@ -132,10 +132,10 @@ parity checklist; the THESIS clauses are the non-negotiable column.
   `agent-loop.asl.json` is a Choice/Map state evaluating a *small decision summary* (`{overflow, toolCallCount,
   gatedCount, shouldCompact}`) — never the model steering the machine. The branch order must match `loop.ts`
   exactly (overflow → zero-tool → HITL → dispatch → result → compact-threshold → step-cap).
-- **THESIS — tools dispatch OOB in `@upstash/box` with NO AI-SDK `execute`.** A handler unit asserts the
+- **THESIS — tools dispatch OOB in the EC2/Docker sandbox with NO AI-SDK `execute`.** A handler unit asserts the
   `tool()` objects built in `llmStep` carry **no `execute`** (the decode.ts contract, 08 §3 / 04) and that tool
-  execution happens only in `dispatchTools` against the box. Grep-gate in CI: no `execute:` inside the
-  `tool()` builder.
+  execution happens only in `dispatchTools` against the resolved `SessionEnv` (D-AWS-15, EC2/Docker over SSM —
+  not `@upstash/box`). Grep-gate in CI: no `execute:` inside the `tool()` builder.
 - **THESIS — the AI SDK stays THIN.** A boundary test asserts `streamText`/`generateText`/`tool()` appear ONLY
   in `llmStep`/`compact` Lambdas — no SDK agent loop, durability, HITL, telemetry, or sandbox above the model
   boundary (the `convex/providers/__tests__/boundary.test.ts` + `sandbox/__tests__/boundary.test.ts` pattern,
@@ -297,8 +297,8 @@ Objective bars — what proves the phase done. Each mirrors a Convex behavior it
   /`UpdateExpression` strings — do not rely on LocalStack alone to catch a non-atomic counter.
 - **`"use node"` Lambdas don't run in the unit VM.** Just as the edge-runtime VM couldn't execute
   `llmStep`/`dispatchTools`/`compact` ([`tests/README.md:30-35`](../../../tests/README.md)), the unit rung
-  can't run the real model/box. Keep the discipline: the **pure cores** prove the algorithm (the moved decode/
-  dispatch units), the **mocked-client units** prove the I/O shape, and **LocalStack** proves the wiring — the
+  can't run the real model or the live EC2/Docker sandbox. Keep the discipline: the **pure cores** prove the algorithm (the moved decode/
+  dispatch units), the **mocked-client units** prove the I/O shape (the sandbox adapter against a fake SSM/Docker client — D-AWS-15), and **LocalStack** proves the wiring — the
   model is injected at the `resolveModel` seam (`cove-test/mock`, the `MockLanguageModelV2` per 08 §Dropped).
   Don't try to make LocalStack run a live provider.
 - **SFN-Local ASL coverage can drift from the deployed machine.** The ASL is CDK-*generated* (G4.3); a checked-in
@@ -315,10 +315,13 @@ Objective bars — what proves the phase done. Each mirrors a Convex behavior it
   with no writer today (D18/G2.4 pending). The migration is the natural place to add the writer (SFN execution
   lifecycle → `Runs` item), but that is **new work, not a port** — it is the easiest parity row to miss. Task 11
   forces an explicit decision: implement-and-test, or record as a known gap. Do not let it fall through.
-- **Box keepAlive cost has no test, only a policy.** Every distinct `sandboxName`
-  (`${ctx.id}:${instanceId}:${harnessName}`, 08 §3) keeps a box warm; unbounded across many runs. The cutover
-  runbook must include the box-delete-on-finalize TTL/eviction policy ([G4.2](phase-g4.2-compute-lambda-actions.md)),
-  and a cost guardrail (reserved concurrency) — these are operational gates on the cutover, not unit-testable.
+- **Sandbox container leak / host saturation has no test, only a policy (D-AWS-15).** Every distinct `sandboxName`
+  (`${ctx.id}:${instanceId}:${harnessName}`, 08 §3) keeps a Docker container resident on the single EC2 host;
+  unbounded across many runs, and the one host is a scale/availability ceiling. The cutover runbook must include
+  the `docker rm -f`-on-finalize cleanup + the host-side age-reaper ([G4.2](phase-g4.2-compute-lambda-actions.md),
+  [G4.1](phase-g4.1-foundation-cdk-dynamodb.md)), a `dispatchTools` reserved-concurrency cap, and host
+  CPU/disk alarms — these are operational gates on the cutover, not unit-testable. The Fargate upgrade path is the
+  documented escape hatch if one host stops being enough.
 - **Reference-header debt on the move.** 08 §2 makes the origin header a review-checklist item for every file.
   The mass `git mv` into `backend/` will leave stale `→ @cove/runtime` notes that no longer mention the
   `ctx.db → store/` transformation. A CI grep that flags a moved file whose header still references a `convex/`
